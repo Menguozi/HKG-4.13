@@ -179,6 +179,7 @@ refresh_list:
 	if (nat_get_blkaddr(ne) == NEW_ADDR)
 		list_del_init(&ne->list);
 	else
+		//从clean list中删掉，加入到对应entry set的链表中
 		list_move_tail(&ne->list, &head->entry_list);
 }
 
@@ -191,6 +192,9 @@ static void __clear_nat_cache_dirty(struct f2fs_nm_info *nm_i,
 	nm_i->dirty_nat_cnt--;
 }
 
+//查询多个nat set
+//start：起始nat block seq
+//nr：数目
 static unsigned int __gang_lookup_nat_set(struct f2fs_nm_info *nm_i,
 		nid_t start, unsigned int nr, struct nat_entry_set **ep)
 {
@@ -348,7 +352,8 @@ static void set_node_addr(struct f2fs_sb_info *sbi, struct node_info *ni,
 	}
 	up_write(&nm_i->nat_tree_lock);
 }
-
+//释放一个nat block数目的nat entry
+//按链表的顺序直接释放
 int try_to_free_nats(struct f2fs_sb_info *sbi, int nr_shrink)
 {
 	struct f2fs_nm_info *nm_i = NM_I(sbi);
@@ -2358,7 +2363,7 @@ static void __adjust_nat_entry_set(struct nat_entry_set *nes,
 
 	if (nes->entry_cnt >= max)
 		goto add_out;
-
+	//从表头往后走，直到遇到一个nat_entry_set的entry_cnt >= 给定nat_entry_set,停下来，把给定的插到它面前
 	list_for_each_entry(cur, head, set_list) {
 		if (cur->entry_cnt >= nes->entry_cnt) {
 			list_add(&nes->set_list, cur->set_list.prev);
@@ -2366,6 +2371,7 @@ static void __adjust_nat_entry_set(struct nat_entry_set *nes,
 		}
 	}
 add_out:
+	//自己就是最大的，加到最后去
 	list_add_tail(&nes->set_list, head);
 }
 
@@ -2400,6 +2406,7 @@ static void __update_nat_bits(struct f2fs_sb_info *sbi, nid_t start_nid,
 		__clear_bit_le(nat_index, nm_i->full_nat_bits);
 }
 
+//存journal中的已经排好序了，其他落盘的也连接上链表了。本函数是flush一个entry_set的代码
 static void __flush_nat_entry_set(struct f2fs_sb_info *sbi,
 		struct nat_entry_set *set, struct cp_control *cpc)
 {
@@ -2416,10 +2423,11 @@ static void __flush_nat_entry_set(struct f2fs_sb_info *sbi,
 	 * #1, flush nat entries to journal in current hot data summary block.
 	 * #2, flush nat entries to nat page.
 	 */
+	 //判断当前
 	if (enabled_nat_bits(sbi, cpc) ||
 		!__has_cursum_space(journal, set->entry_cnt, NAT_JOURNAL))
 		to_journal = false;
-
+	
 	if (to_journal) {
 		down_write(&curseg->journal_rwsem);
 	} else {
@@ -2429,6 +2437,7 @@ static void __flush_nat_entry_set(struct f2fs_sb_info *sbi,
 	}
 
 	/* flush dirty nats in nat entry set */
+	//第三个参数是head,第一个参数是循环变量
 	list_for_each_entry_safe(ne, cur, &set->entry_list, list) {
 		struct f2fs_nat_entry *raw_ne;
 		nid_t nid = nat_get_nid(ne);
@@ -2437,6 +2446,7 @@ static void __flush_nat_entry_set(struct f2fs_sb_info *sbi,
 		f2fs_bug_on(sbi, nat_get_blkaddr(ne) == NEW_ADDR);
 
 		if (to_journal) {
+			//journal数组中寻找或分配一个位置
 			offset = lookup_journal_in_cursum(journal,
 							NAT_JOURNAL, nid, 1);
 			f2fs_bug_on(sbi, offset < 0);
@@ -2478,15 +2488,19 @@ static void __flush_nat_entry_set(struct f2fs_sb_info *sbi,
 /*
  * This function is called during the checkpointing process.
  */
+ //下刷所有脏 nat block
 void flush_nat_entries(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 {
 	struct f2fs_nm_info *nm_i = NM_I(sbi);
 	struct curseg_info *curseg = CURSEG_I(sbi, CURSEG_HOT_DATA);
 	struct f2fs_journal *journal = curseg->journal;
+	//定义了一个指针数组，数组中每个元素时指向nat_entry_set的指针
 	struct nat_entry_set *setvec[SETVEC_SIZE];
 	struct nat_entry_set *set, *tmp;
 	unsigned int found;
 	nid_t set_idx = 0;
+	//刚才还在想，nat_entry_set的指针域set_list，用来串联其他按dirty entry数排好序的nat_entry_set,但是这个链表的表头是谁呢？
+	//现在看来这个表头flush时临时创建的，后期把它释放就行
 	LIST_HEAD(sets);
 
 	if (!nm_i->dirty_nat_cnt)
@@ -2499,15 +2513,22 @@ void flush_nat_entries(struct f2fs_sb_info *sbi, struct cp_control *cpc)
 	 * entries, remove all entries from journal and merge them
 	 * into nat entry set.
 	 */
+	 //目前journal存不下所有的脏entry,则把entry先读出来清空journal，缓存，置dirty,留着后序排序下刷到journal,journal写满后，把其他entry_set直接落盘
+	 //存的下的话直接存journal中
 	if (enabled_nat_bits(sbi, cpc) ||
 		!__has_cursum_space(journal, nm_i->dirty_nat_cnt, NAT_JOURNAL))
 		remove_nats_in_journal(sbi);
-
+	//从nat_set_root基树中每次读32个nat set,放在数组setvec中(element是指向nat_entry_set的指针)
+	//得到的结果是nat block seq从start开始升序，最大的在
 	while ((found = __gang_lookup_nat_set(nm_i,
 					set_idx, SETVEC_SIZE, setvec))) {
 		unsigned idx;
+		//更新下一个start,即最后一个nat set 的seq
 		set_idx = setvec[found - 1]->set + 1;
 		for (idx = 0; idx < found; idx++)
+			//把从nat_set_root基树种按seq遍历的nat_entry_set按dirty entry数从小到大连接成链表，下一步就能直接刷了
+			//最后一个参数max，给定的是MAX_NAT_JENTRIES——表示当前nat journal中剩下的放nat_entry的空间，
+			//意思是如果当前journal已经放不下这些脏nat_entry了，那么直接不用排序了，直接把后面来的nat_entry_set放链表后面就行了
 			__adjust_nat_entry_set(setvec[idx], &sets,
 						MAX_NAT_JENTRIES(journal));
 	}

@@ -617,6 +617,7 @@ enum nid_list {
 };
 
 struct f2fs_nm_info {
+	//磁盘上的nat起始地址
 	block_t nat_blkaddr;		/* base disk address of NAT */
 	nid_t max_nid;			/* maximum possible node ids */
 	nid_t available_nids;		/* # of available node ids */
@@ -626,12 +627,18 @@ struct f2fs_nm_info {
 	unsigned int dirty_nats_ratio;	/* control dirty nats ratio threshold */
 
 	/* NAT cache management */
+	//cache所有nat entry
 	struct radix_tree_root nat_root;/* root of the nat entry cache */
+	//cache所有脏的nat block，一个block是一个set
 	struct radix_tree_root nat_set_root;/* root of the nat set cache */
 	struct rw_semaphore nat_tree_lock;	/* protect nat_tree_lock */
+	//连接所有clean的nat entry
 	struct list_head nat_entries;	/* cached nat entry list (clean) */
+	//nat_root基树中的nat entry数
 	unsigned int nat_cnt;		/* the # of cached nat entries */
+	//dirty nat entry数
 	unsigned int dirty_nat_cnt;	/* total num of nat entries in set */
+	//mkfs时，通过文件系统大小就算好了最多需要多大的空间存储nat
 	unsigned int nat_blocks;	/* # of nat blocks */
 
 	/* free node ids management */
@@ -673,6 +680,7 @@ struct dnode_of_data {
 	char cur_level;			/* level of hole node page */
 	char max_level;			/* level of current page located */
 	block_t	data_blkaddr;		/* block address of the node block */
+	bool is_fg_gc;
 };
 
 static inline void set_new_dnode(struct dnode_of_data *dn, struct inode *inode,
@@ -698,6 +706,9 @@ static inline void set_new_dnode(struct dnode_of_data *dn, struct inode *inode,
  * Just in case, on-disk layout covers maximum 16 logs that consist of 8 for
  * data and 8 for node logs.
  */
+//add finalG start
+#define	NR_HOTNESS_CURSEG_DATA_TYPE	(16)
+//add finalG end
 #define	NR_CURSEG_DATA_TYPE	(3)
 #define NR_CURSEG_NODE_TYPE	(3)
 #define NR_CURSEG_TYPE	(NR_CURSEG_DATA_TYPE + NR_CURSEG_NODE_TYPE)
@@ -731,6 +742,9 @@ struct f2fs_sm_info {
 	struct sit_info *sit_info;		/* whole segment information */
 	struct free_segmap_info *free_info;	/* free segment information */
 	struct dirty_seglist_info *dirty_info;	/* dirty segment information */
+//add finalG
+	struct hotness_curseg_info *hotness_curseg_array;
+//add finalG
 	struct curseg_info *curseg_array;	/* active segment information */
 
 	block_t seg0_blkaddr;		/* block address of 0'th segment */
@@ -824,6 +838,10 @@ enum need_lock_type {
 };
 
 struct f2fs_io_info {
+//add finalG start
+	bool is_fg_gc_page;
+    int hotness_curseg_type;
+//add finalG end
 	struct f2fs_sb_info *sbi;	/* f2fs_sb_info pointer */
 	enum page_type type;	/* contains DATA/NODE/META/META_FLUSH */
 	enum temp_type temp;	/* contains HOT/WARM/COLD */
@@ -908,10 +926,12 @@ struct f2fs_sb_info {
 #endif
 
 	/* for node-related operations */
+	//nat相关的处理
 	struct f2fs_nm_info *nm_info;		/* node manager */
 	struct inode *node_inode;		/* cache node blocks */
 
 	/* for segment-related operations */
+	//里面是segment相关的处理
 	struct f2fs_sm_info *sm_info;		/* segment manager */
 
 	/* for bio operations */
@@ -970,8 +990,9 @@ struct f2fs_sb_info {
 	loff_t max_file_blocks;			/* max block index of file */
 	int active_logs;			/* # of active logs */
 	int dir_level;				/* directory level */
-
+	//格式化时确定的总的valid数
 	block_t user_block_count;		/* # of user blocks */
+	//目前系统的valid block数
 	block_t total_valid_block_count;	/* # of valid blocks */
 	block_t discard_blks;			/* discard command candidats */
 	block_t last_valid_block_count;		/* for recovery */
@@ -995,6 +1016,9 @@ struct f2fs_sb_info {
 	/* for cleaning operations */
 	struct mutex gc_mutex;			/* mutex for GC */
 	struct f2fs_gc_kthread	*gc_thread;	/* GC thread */
+//add finalG start
+	struct task_struct *sample_task;
+//add finalG end
 	unsigned int cur_victim_sec;		/* current victim section num */
 
 	/* threshold for converting bg victims for fg */
@@ -1010,7 +1034,8 @@ struct f2fs_sb_info {
 #ifdef CONFIG_F2FS_STAT_FS
 	struct f2fs_stat_info *stat_info;	/* FS status information */
 	unsigned int segment_count[2];		/* # of allocated segments */
-	unsigned int block_count[2];		/* # of allocated blocks */
+	//第3个元素用来计算更新的DATA page数目
+	unsigned int block_count[4];		/* # of allocated blocks */
 	atomic_t inplace_count;		/* # of inplace update */
 	atomic64_t total_hit_ext;		/* # of lookup extent cache */
 	atomic64_t read_hit_rbtree;		/* # of hit rbtree extent node */
@@ -1050,6 +1075,27 @@ struct f2fs_sb_info {
 #ifdef CONFIG_F2FS_FAULT_INJECTION
 	struct f2fs_fault_info fault_info;
 #endif
+//add finalG
+	struct blk_cnt_entry *blk_cnt_en;
+	int last_utilization;
+	unsigned int *sample_irr_array;
+	unsigned int *sample_lws_array;
+	//输出当前抽样结果时，此次抽样的序号
+	int sample_times;
+	//输出当前抽样结果时，此次抽样的利用率百分比
+	int util;
+	//分级别，每一级的宽度
+	int LEVEL_WIDTH;
+	//超过这个阈值就视为冷数据
+	int COLD_DATA_THRESHOLD;
+	//计算到的质心数
+	int CENTROID_NR;
+	//真实质心数
+	int points;
+	unsigned int *centroid;
+///ch算法相关
+	
+//add finalG
 };
 
 #ifdef CONFIG_F2FS_FAULT_INJECTION
@@ -1700,7 +1746,7 @@ static inline void f2fs_put_page(struct page *page, int unlock)
 		return;
 
 	if (unlock) {
-		f2fs_bug_on(F2FS_P_SB(page), !PageLocked(page));
+		//f2fs_bug_on(F2FS_P_SB(page), !PageLocked(page));
 		unlock_page(page);
 	}
 	put_page(page);
@@ -1715,6 +1761,22 @@ static inline void f2fs_put_dnode(struct dnode_of_data *dn)
 	dn->node_page = NULL;
 	dn->inode_page = NULL;
 }
+static inline void f2fs_unlock_dnode(struct dnode_of_data *dn)
+{
+	if (dn->node_page)
+		unlock_page(dn->node_page);
+}
+
+static inline void f2fs_put_dnode_page(struct dnode_of_data *dn)
+{
+	if (dn->node_page)
+		f2fs_put_page(dn->node_page, 0);
+	if (dn->inode_page && dn->node_page != dn->inode_page)
+		f2fs_put_page(dn->inode_page, 0);
+	dn->node_page = NULL;
+	dn->inode_page = NULL;
+}
+
 
 static inline struct kmem_cache *f2fs_kmem_cache_create(const char *name,
 					size_t size)
@@ -2351,6 +2413,13 @@ void allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 			block_t old_blkaddr, block_t *new_blkaddr,
 			struct f2fs_summary *sum, int type,
 			struct f2fs_io_info *fio, bool add_list);
+//add finalG start
+void allocate_data_block_with_hotness(struct f2fs_sb_info *sbi, struct page *page,
+		block_t old_blkaddr, block_t *new_blkaddr,
+		struct f2fs_summary *sum, int type);
+//add finalG end
+
+
 void f2fs_wait_on_page_writeback(struct page *page,
 			enum page_type type, bool ordered);
 void f2fs_wait_on_encrypted_page_writeback(struct f2fs_sb_info *sbi,
@@ -2424,7 +2493,18 @@ struct page *get_lock_data_page(struct inode *inode, pgoff_t index,
 			bool for_write);
 struct page *get_new_data_page(struct inode *inode,
 			struct page *ipage, pgoff_t index, bool new_i_size);
+//add
+unsigned int get_new_IRR(struct f2fs_sb_info *sbi, unsigned int old_LWS);
+void get_hotness_info(struct f2fs_sb_info *sbi, block_t old_blkaddr, unsigned int *old_IRR, unsigned int *old_LWS);
+void set_hotness_info(struct f2fs_sb_info *sbi, block_t blkaddr, unsigned int IRR_val, unsigned int LWS_val);
+int get_type_by_hotness(unsigned int hotness, struct f2fs_sb_info *sbi);
+
+//add
 int do_write_data_page(struct f2fs_io_info *fio);
+int do_write_data_page_back(struct f2fs_io_info *fio);
+
+
+
 int f2fs_map_blocks(struct inode *inode, struct f2fs_map_blocks *map,
 			int create, int flag);
 int f2fs_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
@@ -2441,6 +2521,10 @@ int f2fs_migrate_page(struct address_space *mapping, struct page *newpage,
 /*
  * gc.c
  */
+ //add finalG start
+void start_sample_thread(struct f2fs_sb_info *sbi);
+void stop_sample_thread(struct f2fs_sb_info *sbi);
+ //add finalG end
 int start_gc_thread(struct f2fs_sb_info *sbi);
 void stop_gc_thread(struct f2fs_sb_info *sbi);
 block_t start_bidx_of_node(unsigned int node_ofs, struct inode *inode);

@@ -476,6 +476,7 @@ void set_data_blkaddr(struct dnode_of_data *dn)
 {
 	f2fs_wait_on_page_writeback(dn->node_page, NODE, true);
 	__set_data_blkaddr(dn);
+	//修改置脏
 	if (set_page_dirty(dn->node_page))
 		dn->node_changed = true;
 }
@@ -740,7 +741,7 @@ got_it:
 	if (new_i_size && i_size_read(inode) <
 				((loff_t)(index + 1) << PAGE_SHIFT))
 		f2fs_i_size_write(inode, ((loff_t)(index + 1) << PAGE_SHIFT));
-	return page;
+	return page;   
 }
 
 static int __allocate_data_block(struct dnode_of_data *dn)
@@ -1385,7 +1386,381 @@ static inline bool valid_ipu_blkaddr(struct f2fs_io_info *fio)
 	return true;
 }
 
+
+
+void get_hotness_info(struct f2fs_sb_info *sbi, block_t old_blkaddr, unsigned int *old_IRR, unsigned int *old_LWS){
+	unsigned int old_segno = 0, old_offset = 0;
+	*old_IRR = MAX_IRR;
+	*old_LWS = 0;
+	if (GET_SEGNO(sbi, old_blkaddr) != NULL_SEGNO){
+		old_segno = GET_SEGNO(sbi, old_blkaddr);
+		old_offset = GET_BLKOFF_FROM_SEG0(sbi, old_blkaddr);
+		*old_IRR = sbi->blk_cnt_en[old_segno * sbi->blocks_per_seg + old_offset].IRR;
+		*old_LWS = sbi->blk_cnt_en[old_segno * sbi->blocks_per_seg + old_offset].LWS;
+	}
+}
+
+void set_hotness_info(struct f2fs_sb_info *sbi, block_t blkaddr, unsigned int IRR_val, unsigned int LWS_val){
+	unsigned int new_segno = 0, new_offset = 0;
+	if (GET_SEGNO(sbi, blkaddr) != NULL_SEGNO){
+		new_segno = GET_SEGNO(sbi, blkaddr);
+		new_offset = GET_BLKOFF_FROM_SEG0(sbi, blkaddr);
+		sbi->blk_cnt_en[new_segno * sbi->blocks_per_seg + new_offset].IRR = IRR_val;
+		sbi->blk_cnt_en[new_segno * sbi->blocks_per_seg + new_offset].LWS = LWS_val;
+	}
+}
+
+/*
+static unsigned int get_new_IRR(struct f2fs_sb_info *sbi, block_t old_blkaddr){
+	unsigned int old_segno = 0, old_offset = 0;
+	unsigned int old_IRR = 0, new_IRR = MAX_IRR, old_LWS = 0;
+	//不是第一次写，旧block存在,则通过公式计算得到新的热度
+	if (GET_SEGNO(sbi, old_blkaddr) != NULL_SEGNO){
+		//获取旧地址的热度和时间信息
+		get_hotness_info(sbi, old_blkaddr, &old_IRR, &old_LWS);
+		new_IRR = sbi->block_count[WARM_DATA_LFS] - old_LWS;
+	}
+	return new_IRR;
+}
+*/
+unsigned int get_new_IRR(struct f2fs_sb_info *sbi, unsigned int old_LWS){
+	return sbi->block_count[WARM_DATA_LFS] - old_LWS;
+}
+
+int get_type_by_hotness(unsigned int hotness, struct f2fs_sb_info *sbi){
+	//9种标准，每种16个type
+	unsigned int type[16] = {0};
+	
+	//利用率是0-10%
+	
+	//it is 1 time to get new centriod
+	//[ 3105.599105] centroid 0 is 75843
+	//[ 3105.599105] centroid 1 is 131718
+	//[ 3105.599105] centroid 2 is 53597
+	//[ 3105.599105] centroid 3 is 2704
+	//[ 3105.599106] centroid 4 is 99070
+	if(sbi->block_count[2] < 1087485){
+		//用10%的指标
+		type[0] = 2 * 10000;
+		type[1] = 4 * 10000;
+		type[2] = 5 * 10000;
+		type[3] = 6 * 10000;
+		type[4] = 8 * 10000;
+		type[5] = MAX_IRR + 1;
+	}
+	//利用率是10-20%
+
+	//it is 2 time to get new centriod
+	//[ 3286.139414] centroid 0 is 167715
+	//[ 3286.139415] centroid 1 is 115509
+	//[ 3286.139415] centroid 2 is 70484
+	//[ 3286.139415] centroid 3 is 2147
+	//[ 3286.139415] centroid 4 is 45796
+	else if(sbi->block_count[2] < 2936399){
+		//用20%的指标
+		type[0] = 2 * 10000;
+		type[1] = 4 * 10000;
+		type[2] = 6 * 10000;
+		type[3] = 8 * 10000;
+		type[4] = 10 * 10000;
+		type[5] = 12 * 10000;
+		type[6] = MAX_IRR + 1;
+	}
+	//利用率是20-30%
+	else if(sbi->block_count[2] < 5111462){
+		//用30%的指标
+		type[0] = 2 * 10000;
+		type[1] = 4 * 10000;
+		type[2] = 6 * 10000;
+		type[3] = 8 * 10000;
+		type[4] = 10 * 10000;
+		type[5] = 11 * 10000;
+		type[6] = 13 * 10000;
+		type[7] = 20 * 10000;
+		type[8] = MAX_IRR + 1;
+		
+	}
+	//it is 4 time to get new centriod
+	//[ 3928.201111] centroid 0 is 179564
+	//[ 3928.201112] centroid 1 is 85243
+	//[ 3928.201112] centroid 2 is 161108
+	//[ 3928.201112] centroid 3 is 52929
+	//[ 3928.201112] centroid 4 is 111419
+	//[ 3928.201113] centroid 5 is 20000
+	//利用率是30-40%
+	else if(sbi->block_count[2] < 7643976){
+		//用40%的指标
+		type[0] = 2 * 10000;
+		type[1] = 4 * 10000;
+		type[2] = 5 * 10000;
+		type[3] = 7 * 10000;
+		type[4] = 8 * 10000;
+		type[5] = 10 * 10000;
+		type[6] = 11 * 10000;
+		type[7] = 13 * 10000;
+		type[8] = 16 * 10000;
+		type[9] = MAX_IRR + 1;
+	}
+	//it is 5 time to get new centriod
+	//[ 4256.877444] centroid 0 is 95155
+	//[ 4256.877444] centroid 1 is 201992
+	//[ 4256.877444] centroid 2 is 180506
+	//[ 4256.877445] centroid 3 is 49817
+	//[ 4256.877445] centroid 4 is 70845
+	//[ 4256.877445] centroid 5 is 20000
+	//利用率是40-50%
+	else if(sbi->block_count[2] < 10012609){
+		//用50%的指标
+		type[0] = 2 * 10000;
+		type[1] = 4 * 10000;
+		type[2] = 6 * 10000;
+		type[3] = 8 * 10000;
+		type[4] = 105000;
+		type[5] = 12  * 10000;
+		type[6] = 14 * 10000;
+		type[7] = 16 * 10000;
+		type[8] = 20 * 10000;
+		type[9] = MAX_IRR + 1;
+	}
+
+	//it is 6 time to get new centriod
+	//[ 4616.286825] centroid 0 is 193321
+	//[ 4616.286825] centroid 1 is 246757
+	//[ 4616.286826] centroid 2 is 102182
+	//[ 4616.286826] centroid 3 is 53149
+	//[ 4616.286826] centroid 4 is 74085
+	//[ 4616.286826] centroid 5 is 20000
+	//利用率是50-60%
+	else if(sbi->block_count[2] < 12734641){
+		//用60%的指标
+		type[0] = 2 * 10000;
+		type[1] = 4 * 10000;
+		type[2] = 6 * 10000;
+		type[3] = 10 * 10000;
+		type[4] = 125000;
+		type[5] = 165000;
+		type[6] = 20 * 10000;
+		type[7] = 25 * 10000;
+		type[8] = 1000 * 10000;
+		type[9] = MAX_IRR + 1;
+	}
+
+	//it is 7 time to get new centriod
+	//[ 5001.397348] centroid 0 is 193430
+	//[ 5001.397348] centroid 1 is 101084
+	//[ 5001.397349] centroid 2 is 271601
+	//[ 5001.397349] centroid 3 is 50832
+	//[ 5001.397349] centroid 4 is 73420
+	//[ 5001.397349] centroid 5 is 20000
+	//利用率是60-70%
+	else if(sbi->block_count[2] < 15652057){
+		//用70%的指标
+		type[0] = 2 * 10000;
+		type[1] = 4 * 10000;
+		type[2] = 5 * 10000;
+		type[3] = 86000;
+		type[4] = 125000;
+		type[5] = 175000;
+		type[6] = 225000;
+		type[7] = 275000;
+		type[8] = 1100 * 10000;
+		type[9] = MAX_IRR + 1;
+	}
+
+
+	//8 time to get new centriod
+	//[ 5401.606693] centroid 0 is 188577
+	//[ 5401.606693] centroid 1 is 287606
+	//[ 5401.606693] centroid 2 is 99626
+	//[ 5401.606693] centroid 3 is 48265
+	//[ 5401.606694] centroid 4 is 72550
+	//[ 5401.606694] centroid 5 is 20000
+	//利用率是70-80%
+	else if(sbi->block_count[2] < 18594069){
+		//用80%的指标
+		type[0] = 2 * 10000;
+		type[1] = 4 * 10000;
+		type[2] = 65000;
+		type[3] = 10 * 10000;
+		type[4] = 12 * 10000;
+		type[5] = 15 * 10000;
+		type[6] = 19 * 10000;
+		type[7] = 23 * 10000;
+		type[8] = 27 * 10000;
+		type[9] = 30 * 10000;
+		type[10] = 138 * 10000;
+		type[11] = 1048 * 10000;
+		type[12] = 1450 * 10000;
+		type[13] = 1646 * 10000;
+		type[14] = 1871 * 10000;
+		type[15] = MAX_IRR + 1;
+	}
+	//利用率是80-90%
+	else{
+		//用90%的指标
+		type[0] = 18000;
+		type[1] = 43000;
+		type[2] = 61000;
+		type[3] = 92000;
+		type[4] = 138000;
+		type[5] = 192000;
+		type[6] = 208000;
+		type[7] = 25 * 10000;
+		type[8] = 30 * 10000;
+		type[9] = 60 * 10000;
+		type[10] = 559 * 10000;
+		type[11] = 1000 * 10000;
+		type[12] = 1520 * 10000;
+		type[13] = 1790 * 10000;
+		type[14] = 2016 * 10000;
+		type[15] = MAX_IRR + 1;
+	}
+	int c = 0;
+	for(c = 0; c < NR_HOTNESS_CURSEG_DATA_TYPE; c++){
+		if(hotness < type[c])
+			break;
+	}
+	return c;
+}
+
+
+
+
+
+static void add_to_hotness_curseg(struct hotness_curseg_info *hotness_curseg, struct page *page){
+    //memcpy(hotness_curseg->delay_page + hotness_curseg->delay_page_nr, page, sizeof(struct page));
+	hotness_curseg->delay_page[hotness_curseg->delay_page_nr] = page;
+	hotness_curseg->delay_page_nr++;
+}
+static void delay_flush_write(struct f2fs_io_info *fio, int type){
+	int i = 0;
+	unsigned int old_IRR = 0, old_LWS = 0;
+	struct hotness_curseg_info *hotness_curseg = HOTNESS_CURSEG_I(fio->sbi, type);
+	fio->hotness_curseg_type = type;
+	for(i = 0; i < 512; i++){
+		struct page *page = hotness_curseg->delay_page[i];
+		int err = 0;
+	    struct inode *inode = NULL;
+		if(page && page->mapping){
+			//printk(KERN_INFO "11111111");
+            struct dnode_of_data dn;
+			inode = page->mapping->host;
+		    if(inode){
+				set_new_dnode(&dn, inode, NULL, NULL, 0);
+				err = get_dnode_of_data(&dn, page->index, LOOKUP_NODE);
+				if (err){
+					printk(KERN_INFO "dnode not exist");
+				}
+				else{
+					if(dn.data_blkaddr != NULL_ADDR){
+						set_page_writeback(page);
+						fio->old_blkaddr = dn.data_blkaddr;
+						fio->page = page;
+						write_data_page(&dn, fio);
+						
+						get_hotness_info(fio->sbi, fio->old_blkaddr, &old_IRR, &old_LWS);
+						set_hotness_info(fio->sbi, fio->new_blkaddr, old_IRR, old_LWS);
+						set_hotness_info(fio->sbi, fio->old_blkaddr, MAX_IRR, 0);
+						if(is_delay_data_page(page))
+							clear_delay_data_page(page);
+						set_inode_flag(inode, FI_APPEND_WRITE);
+						if (page->index == 0)
+							set_inode_flag(inode, FI_FIRST_BLOCK_WRITTEN);	
+					}
+					f2fs_put_dnode(&dn);
+				}
+				//f2fs_put_dnode(&dn);
+			}else{
+			    f2fs_bug_on(fio->sbi, inode == NULL);
+			}
+		    f2fs_put_page(page, 1);
+		}else{
+			printk(KERN_INFO "PAGE IS NOT EXIST");
+		}
+	}
+	hotness_curseg->delay_page_nr = 0;
+}
+			
+			
+	
+	
+
+
+//delay_do_write_data_page
 int do_write_data_page(struct f2fs_io_info *fio)
+{
+	int type = 0;
+	unsigned int old_IRR = 0, old_LWS = 0, new_IRR = MAX_IRR;
+	int err = 0;
+	struct page *page = fio->page;
+	struct inode *inode = page->mapping->host;
+	struct dnode_of_data dn;
+	struct hotness_curseg_info *hotness_curseg;
+	set_new_dnode(&dn, inode, NULL, NULL, 0);
+
+	/* Deadlock due to between page->lock and f2fs_lock_op */
+	if (fio->need_lock == LOCK_REQ && !f2fs_trylock_op(fio->sbi))
+		return -EAGAIN;
+	err = get_dnode_of_data(&dn, page->index, LOOKUP_NODE);
+	if (err)
+		goto out;
+	/* This page is already truncated */
+	if (dn.data_blkaddr == NULL_ADDR) {
+		ClearPageUptodate(page);
+		goto out_writepage;
+	}
+	if (fio->need_lock == LOCK_RETRY) {
+		if (!f2fs_trylock_op(fio->sbi)) {
+			err = -EAGAIN;
+			goto out_writepage;
+		}
+		fio->need_lock = LOCK_REQ;
+	}
+	err = encrypt_one_page(fio);
+	if (err)
+		goto out_writepage;
+	fio->sbi->block_count[WARM_DATA_LFS]++;
+	get_hotness_info(fio->sbi, dn.data_blkaddr, &old_IRR, &old_LWS);
+	new_IRR = fio->sbi->block_count[WARM_DATA_LFS] - old_LWS;
+	if(!fio->is_fg_gc_page){
+		if(GET_SEGNO(fio->sbi, dn.data_blkaddr) != NULL_SEGNO){
+			set_hotness_info(fio->sbi, dn.data_blkaddr, new_IRR, fio->sbi->block_count[WARM_DATA_LFS]);
+		}
+	}else{
+        if(GET_SEGNO(fio->sbi, dn.data_blkaddr) != NULL_SEGNO){
+			new_IRR = old_IRR;
+			set_hotness_info(fio->sbi, dn.data_blkaddr, new_IRR, old_LWS);
+		}
+	}
+	
+	f2fs_put_dnode(&dn);	
+	if(!is_delay_data_page(page)){
+		get_page(page);
+		set_delay_data_page(page);
+		type = get_type_by_hotness(new_IRR, fio->sbi);
+		hotness_curseg = HOTNESS_CURSEG_I(fio->sbi, type);
+		
+		mutex_lock(&hotness_curseg->hotness_curseg_mutex);
+		add_to_hotness_curseg(hotness_curseg, page);
+		
+		if(hotness_curseg->delay_page_nr == 512){
+			delay_flush_write(fio, type);
+		}
+		mutex_unlock(&hotness_curseg->hotness_curseg_mutex);
+	}
+	goto out;
+out_writepage:
+	f2fs_put_dnode(&dn);	
+	
+out:
+	if (fio->need_lock == LOCK_REQ)
+		f2fs_unlock_op(fio->sbi);
+    return err;
+	
+}
+
+
+int do_write_data_page_back(struct f2fs_io_info *fio)
 {
 	struct page *page = fio->page;
 	struct inode *inode = page->mapping->host;
@@ -1396,7 +1771,7 @@ int do_write_data_page(struct f2fs_io_info *fio)
 
 	set_new_dnode(&dn, inode, NULL, NULL, 0);
 	if (need_inplace_update(fio) &&
-			f2fs_lookup_extent_cache(inode, page->index, &ei)) {
+			f2fs_lookup_extent_cache(inode, page->index, &ei) && false) {
 		fio->old_blkaddr = ei.blk + page->index - ei.fofs;
 
 		if (valid_ipu_blkaddr(fio)) {
@@ -1426,7 +1801,7 @@ got_it:
 	 * If current allocation needs SSR,
 	 * it had better in-place writes for updated data.
 	 */
-	if (ipu_force || (valid_ipu_blkaddr(fio) && need_inplace_update(fio))) {
+	if (ipu_force || (valid_ipu_blkaddr(fio) && need_inplace_update(fio) && false)) {
 		err = encrypt_one_page(fio);
 		if (err)
 			goto out_writepage;
@@ -1472,6 +1847,7 @@ out:
 static int __write_data_page(struct page *page, bool *submitted,
 				struct writeback_control *wbc)
 {
+	//printk(KERN_INFO "__write_data_page");
 	struct inode *inode = page->mapping->host;
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
 	loff_t i_size = i_size_read(inode);
@@ -1482,6 +1858,7 @@ static int __write_data_page(struct page *page, bool *submitted,
 	bool need_balance_fs = false;
 	int err = 0;
 	struct f2fs_io_info fio = {
+		.is_fg_gc_page = false,
 		.sbi = sbi,
 		.type = DATA,
 		.op = REQ_OP_WRITE,
@@ -1545,7 +1922,6 @@ write:
 		if (!err)
 			goto out;
 	}
-
 	if (err == -EAGAIN) {
 		err = do_write_data_page(&fio);
 		if (err == -EAGAIN) {
@@ -1555,7 +1931,6 @@ write:
 	}
 	if (F2FS_I(inode)->last_disk_size < psize)
 		F2FS_I(inode)->last_disk_size = psize;
-
 done:
 	if (err && err != -ENOENT)
 		goto redirty_out;
@@ -1583,7 +1958,6 @@ out:
 
 	if (submitted)
 		*submitted = fio.submitted;
-
 	return 0;
 
 redirty_out:
@@ -1615,6 +1989,7 @@ static int f2fs_write_cache_pages(struct address_space *mapping,
 	pgoff_t uninitialized_var(writeback_index);
 	pgoff_t index;
 	pgoff_t end;		/* Inclusive */
+	//当前写的page
 	pgoff_t done_index;
 	pgoff_t last_idx = ULONG_MAX;
 	int cycled;
@@ -1638,12 +2013,14 @@ static int f2fs_write_cache_pages(struct address_space *mapping,
 			cycled = 0;
 		end = -1;
 	} else {
+		//确定起始页偏移
 		index = wbc->range_start >> PAGE_SHIFT;
 		end = wbc->range_end >> PAGE_SHIFT;
 		if (wbc->range_start == 0 && wbc->range_end == LLONG_MAX)
 			range_whole = 1;
 		cycled = 1; /* ignore range_cyclic tests */
 	}
+	//确定要写入的页的tag
 	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
 		tag = PAGECACHE_TAG_TOWRITE;
 	else
@@ -1654,7 +2031,7 @@ retry:
 	done_index = index;
 	while (!done && (index <= end)) {
 		int i;
-
+        //page数目
 		nr_pages = pagevec_lookup_tag(&pvec, mapping, &index, tag,
 			      min(end - index, (pgoff_t)PAGEVEC_SIZE - 1) + 1);
 		if (nr_pages == 0)
@@ -1671,32 +2048,35 @@ retry:
 
 			done_index = page->index;
 retry_write:
+			//锁住
 			lock_page(page);
-
+			//有问题，释放下一个
 			if (unlikely(page->mapping != mapping)) {
 continue_unlock:
 				unlock_page(page);
 				continue;
 			}
-
+			//目前不是dirty状态，下一个
 			if (!PageDirty(page)) {
 				/* someone wrote it for us */
 				goto continue_unlock;
 			}
-
+			//正处于回写的状态中
 			if (PageWriteback(page)) {
-				if (wbc->sync_mode != WB_SYNC_NONE)
+				//如果是需要等待的（如fsync）就等它写完再继续
+				if (wbc->sync_mode != WB_SYNC_NONE){
 					f2fs_wait_on_page_writeback(page,
 								DATA, true);
+				}
 				else
 					goto continue_unlock;
 			}
-
 			BUG_ON(PageWriteback(page));
 			if (!clear_page_dirty_for_io(page))
 				goto continue_unlock;
-
+            
 			ret = __write_data_page(page, &submitted, wbc);
+			//如果写失败了
 			if (unlikely(ret)) {
 				/*
 				 * keep nr_to_write, since vfs uses this to

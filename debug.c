@@ -252,6 +252,20 @@ get_cache:
 	si->page_mem += (unsigned long long)npages << PAGE_SHIFT;
 }
 
+static int check_valid_map(struct f2fs_sb_info *sbi,
+				unsigned int segno, int offset)
+{
+	struct sit_info *sit_i = SIT_I(sbi);
+	struct seg_entry *sentry;
+	int ret;
+
+	mutex_lock(&sit_i->sentry_lock);
+	sentry = get_seg_entry(sbi, segno);
+	ret = f2fs_test_bit(offset, sentry->cur_valid_map);
+	mutex_unlock(&sit_i->sentry_lock);
+	return ret;
+}
+
 static int stat_show(struct seq_file *s, void *v)
 {
 	struct f2fs_stat_info *si;
@@ -391,6 +405,10 @@ static int stat_show(struct seq_file *s, void *v)
 		seq_printf(s, "IPU: %u blocks\n", si->inplace_count);
 		seq_printf(s, "SSR: %u blocks in %u segments\n",
 			   si->block_count[SSR], si->segment_count[SSR]);
+		seq_printf(s, "WARM DATA LFS: %u blocks\n",
+			   si->sbi->block_count[WARM_DATA_LFS]);
+		seq_printf(s, "WARM DATA FG_GC: %u blocks\n",
+			   si->sbi->block_count[WARM_DATA_FG_GC]);
 		seq_printf(s, "LFS: %u blocks in %u segments\n",
 			   si->block_count[LFS], si->segment_count[LFS]);
 
@@ -409,6 +427,89 @@ static int stat_show(struct seq_file *s, void *v)
 				si->cache_mem >> 10);
 		seq_printf(s, "  - paged : %llu KB\n",
 				si->page_mem >> 10);
+//add finalG
+		/*
+		for(i = 0; i < MAIN_SEGS(si->sbi) * si->sbi->blocks_per_seg; i++){
+			if((si->sbi->blk_cnt_en + i)->IRR != MAX_IRR)
+				seq_printf(s, "IRR: %u, LWS: %u\n", (si->sbi->blk_cnt_en + i)->IRR, (si->sbi->blk_cnt_en + i)->LWS);
+		}
+		
+		//打印出当前的热配的热段
+		struct hotness_curseg_info *array = SM_I(si->sbi)->hotness_curseg_array;
+		for (i = 0; i < NR_HOTNESS_CURSEG_DATA_TYPE; i++) {
+			seq_printf(s, "hotness curseg %d =  %u; ", i, array[i].segno);
+		}
+		seq_printf(s, "\nthe nat blocks = %u\n",si->sbi->nm_info->nat_blocks);
+		*/
+		//输出当前时间
+		//seq_printf(s, "now time: %llu\n", get_mtime(si->sbi));
+		
+		//打印出抽样信息
+		//当前抽样结果的和利用率和抽样序号
+		//seq_printf(s, "\nthe utilization is %d, it is %d time to sample\n",si->sbi->util, si->sbi->sample_times);
+		//当前抽样结果中的irr和lws
+		//seq_printf(s, "sample result:\n");
+		//for(i = 0; i < 90000; i++){
+		//	seq_printf(s, "irr: %u, lws: %u\n", *(si->sbi->sample_irr_array + i), *(si->sbi->sample_lws_array + i));
+		//}
+		
+		/**
+		//打印出有效block的lws，距离当前cws的大小，看看每个百分比的情况。
+		//下面两个cnt是为了验证valid map和valid数对得上么
+		int valid_cnt = 0;
+		int valid_cnt1 = 0;
+		struct seg_entry *sentry;
+		struct sit_info *sit_i = SIT_I(si->sbi);
+		mutex_lock(&sit_i->sentry_lock);
+
+		for(i = 0; i < MAIN_SEGS(si->sbi); i++){
+			
+			sentry = get_seg_entry(si->sbi, i);
+			valid_cnt += sentry->valid_blocks;
+			for(j =0; j < 512; j++){
+				if(f2fs_test_bit(j, sentry->cur_valid_map)){
+					valid_cnt1++;
+					seq_printf(s, "%d: %u\n", i * 512 + j, si->sbi->blk_cnt_en[i * 512 + j].LWS); 
+				}
+			}
+			
+		}
+		mutex_unlock(&sit_i->sentry_lock);
+		seq_printf(s, "valid cnt = %d\n", valid_cnt); 
+		seq_printf(s, "valid cnt1 = %d\n", valid_cnt1); 
+		*/
+
+		
+		/*
+		//打印出每个seg的valid的level统计情况，以及总的valid数
+		struct seg_entry *sentry;
+		struct sit_info *sit_i = SIT_I(si->sbi);
+		int level_nr = 5;
+		int level_cnt[20];
+		int k = 0, cur_level = 0;
+		mutex_lock(&sit_i->sentry_lock);
+
+		for(i = 0; i < MAIN_SEGS(si->sbi); i++){
+			//各个level的cnt
+			for(k = 0; k < level_nr; k++){
+				level_cnt[k] = 0;
+			}
+			int valid_cnt = 0, level_width = si->sbi->block_count[WARM_DATA_LFS] / level_nr;
+			sentry = get_seg_entry(si->sbi, i);
+			valid_cnt = sentry->valid_blocks;
+			for(j = 0; j < 512; j++){
+				if(f2fs_test_bit(j, sentry->cur_valid_map)){
+					cur_level = si->sbi->blk_cnt_en[i * 512 + j].LWS / level_width;
+					if(cur_level == level_nr)
+						cur_level = level_nr - 1; 
+					level_cnt[cur_level]++;
+				}
+			}
+			seq_printf(s, "%d: %d, %d, %d, %d, %d, \n", valid_cnt, level_cnt[0], level_cnt[1], level_cnt[2], level_cnt[3], level_cnt[4]);
+		}
+		mutex_unlock(&sit_i->sentry_lock);
+		*/
+//add finalG
 	}
 	mutex_unlock(&f2fs_stat_mutex);
 	return 0;
