@@ -24,6 +24,8 @@
 #include "trace.h"
 #include <trace/events/f2fs.h>
 
+#include <linux/syscalls.h>
+
 #define __reverse_ffz(x) __reverse_ffs(~(x))
 
 static struct kmem_cache *discard_entry_slab;
@@ -1590,12 +1592,50 @@ void invalidate_blocks(struct f2fs_sb_info *sbi, block_t addr)
 	unsigned int segno = GET_SEGNO(sbi, addr);
 	struct sit_info *sit_i = SIT_I(sbi);
 
+	char str[24];
+	unsigned int updated, read, i = 0, j = 0;
+	loff_t diskpos = sbi->disk_pos;
+
 	f2fs_bug_on(sbi, addr == NULL_ADDR);
 	if (addr == NEW_ADDR)
 		return;
 
 	/* add it into sit main buffer */
 	mutex_lock(&sit_i->sentry_lock);
+
+	updated = sbi->blk_cnt_en[addr - sbi->sm_info->main_blkaddr].updated;
+	read = sbi->blk_cnt_en[addr - sbi->sm_info->main_blkaddr].read;
+	memset(str, 0, sizeof(str));
+
+
+	do{
+		str[i++] = read % 10 + '0';
+		read /= 10;
+	} while (read > 0);
+	str[i++] = ':';
+	do{
+		str[i++] = updated % 10 + '0';
+		updated /= 10;
+	} while (updated > 0);
+	str[i] = '\0';
+
+
+	for(; j < (i >> 1); ++j){		
+		str[j] = str[j] + str[i-1-j];
+        str[i-1-j] = str[j] - str[i-1-j];
+        str[j] = str[j] - str[i-1-j];
+	}
+	str[++i] = '\t';
+
+	kernel_write(sbi->raw_disk, str, sizeof(str), &(diskpos));
+	sbi->disk_pos = diskpos;
+
+	
+
+	sbi->blk_cnt_en[addr - sbi->sm_info->main_blkaddr].updated = 0;
+	sbi->blk_cnt_en[addr - sbi->sm_info->main_blkaddr].read = 0;
+	sbi->blk_cnt_en[addr - sbi->sm_info->main_blkaddr].last = 0;
+	sbi->blk_cnt_en[addr - sbi->sm_info->main_blkaddr].lastlast = 0;
 
 	update_sit_entry(sbi, addr, -1);
 
@@ -2462,6 +2502,11 @@ static void do_write_page(struct f2fs_summary *sum, struct f2fs_io_info *fio)
 	int type =  __get_segment_type(fio);
 	unsigned int new_IRR = 0;	
 	int err;
+
+	unsigned int old_updated = 0;
+	unsigned int old_read = 0;
+	unsigned int old_last = 0;
+
 reallocate:
 	if(type == CURSEG_HOT_DATA || type == CURSEG_WARM_DATA){
 	    allocate_data_block_with_hotness(fio->sbi, fio->page, fio->old_blkaddr, &fio->new_blkaddr, sum, fio->hotness_curseg_type);
@@ -2480,6 +2525,24 @@ reallocate:
 		fio->old_blkaddr = fio->new_blkaddr;
 		goto reallocate;
 	}
+
+	//printk(KERN_INFO "sjc : do_write_page");
+	fio->sbi->updated_pages++;
+	if(GET_SEGNO(fio->sbi, fio->old_blkaddr) != NULL_SEGNO){
+		old_updated = fio->sbi->blk_cnt_en[fio->old_blkaddr - fio->sbi->sm_info->main_blkaddr].updated;
+		old_read = fio->sbi->blk_cnt_en[fio->old_blkaddr - fio->sbi->sm_info->main_blkaddr].read;
+		old_last = fio->sbi->blk_cnt_en[fio->old_blkaddr - fio->sbi->sm_info->main_blkaddr].last;
+
+		fio->sbi->blk_cnt_en[fio->old_blkaddr - fio->sbi->sm_info->main_blkaddr].updated = 0;
+		fio->sbi->blk_cnt_en[fio->old_blkaddr - fio->sbi->sm_info->main_blkaddr].read = 0;
+		fio->sbi->blk_cnt_en[fio->old_blkaddr - fio->sbi->sm_info->main_blkaddr].lastlast = 0;
+		fio->sbi->blk_cnt_en[fio->old_blkaddr - fio->sbi->sm_info->main_blkaddr].last = 0;
+
+	}
+	fio->sbi->blk_cnt_en[fio->new_blkaddr - fio->sbi->sm_info->main_blkaddr].updated = old_updated + 1;
+	fio->sbi->blk_cnt_en[fio->new_blkaddr - fio->sbi->sm_info->main_blkaddr].read = old_read;
+	fio->sbi->blk_cnt_en[fio->new_blkaddr - fio->sbi->sm_info->main_blkaddr].lastlast = old_last;
+	fio->sbi->blk_cnt_en[fio->new_blkaddr - fio->sbi->sm_info->main_blkaddr].last = fio->sbi->updated_pages;
 }
 
 /*

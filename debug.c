@@ -272,6 +272,10 @@ static int stat_show(struct seq_file *s, void *v)
 	int i = 0;
 	int j;
 
+	unsigned int unzero_updated = 0;
+	unsigned int unzero_read = 0;
+	unsigned long total_blocks = 0;
+
 	mutex_lock(&f2fs_stat_mutex);
 	list_for_each_entry(si, &f2fs_stat_list, stat_list) {
 		update_general_status(si->sbi);
@@ -510,6 +514,31 @@ static int stat_show(struct seq_file *s, void *v)
 		mutex_unlock(&sit_i->sentry_lock);
 		*/
 //add finalG
+
+		seq_printf(s, "format: \"updated : read : FUD: LRUD\" \n")	;
+		total_blocks = MAIN_SEGS(si->sbi) * si->sbi->blocks_per_seg;
+		j = 0;
+		for ( i = 0; i < total_blocks; i++)
+		{
+			if((si->sbi->blk_cnt_en + i)->updated != 0)
+				++unzero_updated;
+			if((si->sbi->blk_cnt_en + i)->read != 0)
+				++unzero_read;
+			// if(i%32 == 0)
+			// 	seq_printf(s, "\n");
+			if ((si->sbi->blk_cnt_en + i)->updated || (si->sbi->blk_cnt_en + i)->read 
+			|| (si->sbi->blk_cnt_en + i)->lastlast || (si->sbi->blk_cnt_en + i)->last){
+				seq_printf(s, "%u\t%u\t%u\t%u\n", (si->sbi->blk_cnt_en + i)->updated,
+					(si->sbi->blk_cnt_en + i)->read,
+					(si->sbi->blk_cnt_en + i)->lastlast ? (si->sbi->blk_cnt_en + i)->last - (si->sbi->blk_cnt_en + i)->lastlast : 0,
+					(si->sbi->blk_cnt_en + i)->last ? si->sbi->updated_pages - (si->sbi->blk_cnt_en + i)->last : 0);
+				j++;
+			}
+		}
+		seq_printf(s, "%u\t%u\t%u\t%u\n", 0, 0, 0, 0);
+		seq_printf(s, "%u\n", j);
+		// seq_printf(s, "\n updated blocks:  %u \n", unzero_updated);
+		// seq_printf(s, " read blocks:  %u \n", unzero_read);
 	}
 	mutex_unlock(&f2fs_stat_mutex);
 	return 0;

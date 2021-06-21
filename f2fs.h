@@ -1077,6 +1077,11 @@ struct f2fs_sb_info {
 #endif
 //add finalG
 	struct blk_cnt_entry *blk_cnt_en;
+
+	unsigned int updated_pages;
+	struct file *raw_disk;
+	loff_t disk_pos;
+
 	int last_utilization;
 	unsigned int *sample_irr_array;
 	unsigned int *sample_lws_array;
@@ -1093,6 +1098,8 @@ struct f2fs_sb_info {
 	//真实质心数
 	int points;
 	unsigned int *centroid;
+	unsigned int m_centroid[10][4];
+	int khg;
 ///ch算法相关
 	
 //add finalG

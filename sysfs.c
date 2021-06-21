@@ -128,6 +128,64 @@ static ssize_t f2fs_sbi_store(struct f2fs_attr *a,
 	return count;
 }
 
+static ssize_t f2fs_sbi_show_sbi_str(struct f2fs_attr *a,
+			struct f2fs_sb_info *sbi, char *buf)
+{
+	char *ptr = NULL;
+	unsigned int *ui;
+	int i, j, pos, ret = 0;
+
+	ptr = (char*)(sbi);
+	if (!ptr)
+		return -EINVAL;
+
+	// ui = *(char**)(ptr + a->offset);
+	ui = (unsigned int *)(buf);
+	pos = 0;
+
+	for (i = 0; i < 10; i++){
+		for (j = 0; j < 4; j++){
+			printk("sbi->m_centroid[%d][%d]: %u\n", i, j, sbi->m_centroid[i][j]);
+			ret += snprintf(buf + pos*6, sizeof(unsigned int) + sizeof(char), "%u\t", sbi->m_centroid[i][j]);
+			pos++;
+		}
+	}
+
+	// memcpy(buf, ui, PAGE_SIZE);
+	printk("ret: %d\n", ret);
+	return (ssize_t)ret;
+}
+
+// 从sysfs中加载
+static ssize_t f2fs_sbi_store_sbi_str(struct f2fs_attr *a,
+			struct f2fs_sb_info *sbi,
+			const char *buf, size_t count)
+{
+	char *ptr;
+	unsigned int *ui;
+	int i, j, pos;
+
+	ptr = (char *)(sbi);
+	if (!ptr)
+		return -EINVAL;
+
+	ui = (unsigned int *)(ptr + a->offset);
+
+	pos = 0;
+	ui = (unsigned int *)buf;
+
+	for (i = 0; i < 10; i++){
+		for (j = 0; j < 4; j++){
+			sbi->m_centroid[i][j] = *(ui + pos);
+			pos++;
+		}
+	}
+	sbi->khg = 1;
+	printk("pos: %d\n", pos);
+
+	return count;
+}
+
 static ssize_t f2fs_attr_show(struct kobject *kobj,
 				struct attribute *attr, char *buf)
 {
@@ -191,6 +249,9 @@ F2FS_RW_ATTR(F2FS_SBI, f2fs_sb_info, max_victim_search, max_victim_search);
 F2FS_RW_ATTR(F2FS_SBI, f2fs_sb_info, dir_level, dir_level);
 F2FS_RW_ATTR(F2FS_SBI, f2fs_sb_info, cp_interval, interval_time[CP_TIME]);
 F2FS_RW_ATTR(F2FS_SBI, f2fs_sb_info, idle_interval, interval_time[REQ_TIME]);
+
+F2FS_ATTR_OFFSET(F2FS_SBI, centroid, 0644, f2fs_sbi_show_sbi_str, f2fs_sbi_store_sbi_str, offsetof(struct f2fs_sb_info, centroid));
+
 #ifdef CONFIG_F2FS_FAULT_INJECTION
 F2FS_RW_ATTR(FAULT_INFO_RATE, f2fs_fault_info, inject_rate, inject_rate);
 F2FS_RW_ATTR(FAULT_INFO_TYPE, f2fs_fault_info, inject_type, inject_type);
@@ -223,6 +284,7 @@ static struct attribute *f2fs_attrs[] = {
 #endif
 	ATTR_LIST(lifetime_write_kbytes),
 	ATTR_LIST(reserved_blocks),
+	ATTR_LIST(centroid),
 	NULL,
 };
 

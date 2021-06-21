@@ -1195,6 +1195,8 @@ static int f2fs_mpage_readpages(struct address_space *mapping,
 	sector_t block_nr;
 	struct f2fs_map_blocks map;
 
+	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
+
 	map.m_pblk = 0;
 	map.m_lblk = 0;
 	map.m_len = 0;
@@ -1281,6 +1283,8 @@ submit_and_realloc:
 
 		if (bio_add_page(bio, page, blocksize, 0) < blocksize)
 			goto submit_and_realloc;
+
+		sbi->blk_cnt_en[block_nr - sbi->sm_info->main_blkaddr].read++;
 
 		last_block_in_bio = block_nr;
 		goto next_page;
@@ -1427,9 +1431,50 @@ unsigned int get_new_IRR(struct f2fs_sb_info *sbi, unsigned int old_LWS){
 	return sbi->block_count[WARM_DATA_LFS] - old_LWS;
 }
 
+static unsigned long int get_sub2(unsigned int a, unsigned int b)
+{
+	return a > b? (a - b)*(a - b) : (b - a)*(b - a);
+}
+
+static unsigned long int get_distance(struct blk_cnt_entry *bce_a, struct blk_cnt_entry *bce_b)
+{
+	unsigned long int ret = 0;
+	ret += get_sub2(bce_a->updated, bce_b->updated);
+	ret += get_sub2(bce_a->read, bce_b->read);
+	ret += get_sub2(bce_a->last, bce_b->last);
+	ret += get_sub2(bce_a->lastlast, bce_b->lastlast);
+	return ret;
+}
+
+int get_type_by_hkg(block_t old_blkaddr, struct f2fs_sb_info *sbi){
+	int i, type = 0;
+	unsigned long int cur_dist, min_dist = 18446744073709551615u;
+	struct blk_cnt_entry bce_a;
+	struct blk_cnt_entry bce_b;
+
+	int old_segno = GET_SEGNO(sbi, old_blkaddr);
+	int old_offset = GET_BLKOFF_FROM_SEG0(sbi, old_blkaddr);
+	memcpy(&bce_a, &sbi->blk_cnt_en[old_segno * sbi->blocks_per_seg + old_offset], sizeof(struct blk_cnt_entry));
+
+	for(i = 0; i < 10; i++){
+		bce_b.updated = sbi->m_centroid[i][0];
+		bce_b.read = sbi->m_centroid[i][1];
+		bce_b.lastlast = sbi->m_centroid[i][2];
+		bce_b.last = sbi->m_centroid[i][3];
+		cur_dist = get_distance(&bce_a, &bce_b);
+		if(min_dist < cur_dist){
+			min_dist = cur_dist;
+			type = i;
+		}
+	}
+
+	return type;
+}
+
 int get_type_by_hotness(unsigned int hotness, struct f2fs_sb_info *sbi){
 	//9种标准，每种16个type
 	unsigned int type[16] = {0};
+	int c = 0;
 	
 	//利用率是0-10%
 	
@@ -1615,7 +1660,6 @@ int get_type_by_hotness(unsigned int hotness, struct f2fs_sb_info *sbi){
 		type[14] = 2016 * 10000;
 		type[15] = MAX_IRR + 1;
 	}
-	int c = 0;
 	for(c = 0; c < NR_HOTNESS_CURSEG_DATA_TYPE; c++){
 		if(hotness < type[c])
 			break;
@@ -1696,12 +1740,14 @@ int do_write_data_page(struct f2fs_io_info *fio)
 	struct inode *inode = page->mapping->host;
 	struct dnode_of_data dn;
 	struct hotness_curseg_info *hotness_curseg;
+	block_t old_blkaddr;
 	set_new_dnode(&dn, inode, NULL, NULL, 0);
 
 	/* Deadlock due to between page->lock and f2fs_lock_op */
 	if (fio->need_lock == LOCK_REQ && !f2fs_trylock_op(fio->sbi))
 		return -EAGAIN;
 	err = get_dnode_of_data(&dn, page->index, LOOKUP_NODE);
+	old_blkaddr = dn.data_blkaddr;
 	if (err)
 		goto out;
 	/* This page is already truncated */
@@ -1738,6 +1784,10 @@ int do_write_data_page(struct f2fs_io_info *fio)
 		get_page(page);
 		set_delay_data_page(page);
 		type = get_type_by_hotness(new_IRR, fio->sbi);
+		if(fio->sbi->khg){
+			type = get_type_by_hkg(old_blkaddr, fio->sbi);
+		}
+		
 		hotness_curseg = HOTNESS_CURSEG_I(fio->sbi, type);
 		
 		mutex_lock(&hotness_curseg->hotness_curseg_mutex);

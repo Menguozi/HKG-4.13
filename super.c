@@ -1888,6 +1888,12 @@ static int f2fs_scan_devices(struct f2fs_sb_info *sbi)
 static void build_block_cnt_manager(struct f2fs_sb_info *sbi){
 	//main area有5616个seg,为每个block分配一个int，总共约需要分配10M的内存
 	struct blk_cnt_entry *blk_cnt_en = vzalloc(sizeof(struct blk_cnt_entry) * MAIN_SEGS(sbi) * sbi->blocks_per_seg);
+
+	// sbi->blk_cnt_en = entries;
+	sbi->raw_disk = filp_open("/dev/sdc2", O_RDWR, 0644);
+	sbi->disk_pos = 0;
+	sbi->khg = 0;
+
 	int i = 0;
 	//初始化时，IRR是MAX,第一次写当做冷数据;LWS是0
 	for(i = 0; i < MAIN_SEGS(sbi) * sbi->blocks_per_seg; i++){
@@ -2108,6 +2114,10 @@ try_onemore:
 	build_gc_manager(sbi);
 //add finalG
 	build_block_cnt_manager(sbi);
+
+	sbi->updated_pages = 0;
+	printk(KERN_INFO "sjc : origin 5.4");
+
 //add finalG
 	/* get an inode for node space */
 	sbi->node_inode = f2fs_iget(sb, F2FS_NODE_INO(sbi));
@@ -2282,6 +2292,7 @@ static struct dentry *f2fs_mount(struct file_system_type *fs_type, int flags,
 static void kill_f2fs_super(struct super_block *sb)
 {
 	if (sb->s_root) {
+		struct f2fs_sb_info *sbi = F2FS_SB(sb);
 		set_sbi_flag(F2FS_SB(sb), SBI_IS_CLOSE);
 		stop_gc_thread(F2FS_SB(sb));
 //add finalG start
@@ -2289,6 +2300,9 @@ static void kill_f2fs_super(struct super_block *sb)
 		stop_sample_thread(F2FS_SB(sb));
 //add finalG end
 		stop_discard_thread(F2FS_SB(sb));
+
+		filp_close(sbi->raw_disk, NULL);
+
 	}
 	kill_block_super(sb);
 }

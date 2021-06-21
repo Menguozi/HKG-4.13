@@ -186,6 +186,11 @@ struct victim_sel_policy {
 struct blk_cnt_entry{
 	unsigned int IRR;	/*代表热度值*/
 	unsigned int LWS;	/* 块的修改modify时间，占64bit */
+
+	unsigned int updated;	/*一个block的更新次数*/
+	unsigned int read;
+	unsigned int last;
+	unsigned int lastlast;
 };
 
 //聚类用的
@@ -564,11 +569,11 @@ static inline int reserved_sections(struct f2fs_sb_info *sbi)
 
 static inline bool need_SSR(struct f2fs_sb_info *sbi)
 {
-	return false;
 	int node_secs = get_blocktype_secs(sbi, F2FS_DIRTY_NODES);
 	int dent_secs = get_blocktype_secs(sbi, F2FS_DIRTY_DENTS);
 	int imeta_secs = get_blocktype_secs(sbi, F2FS_DIRTY_IMETA);
 
+	return false;
 	if (test_opt(sbi, LFS))
 		return false;
 

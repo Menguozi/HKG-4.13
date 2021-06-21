@@ -1109,6 +1109,10 @@ static int read_node_page(struct page *page, int op_flags)
 	}
 
 	fio.new_blkaddr = fio.old_blkaddr = ni.blk_addr;
+
+	printk("sjc: read_node_page %d", ni.blk_addr);
+	sbi->blk_cnt_en[ni.blk_addr - sbi->sm_info->main_blkaddr].read++;
+
 	return f2fs_submit_page_bio(&fio);
 }
 
