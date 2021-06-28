@@ -143,7 +143,7 @@ static ssize_t f2fs_sbi_show_sbi_str(struct f2fs_attr *a,
 	ui = (unsigned int *)(buf);
 	pos = 0;
 
-	for (i = 0; i < 10; i++){
+	for (i = 0; i < M_K; i++){
 		for (j = 0; j < 4; j++){
 			printk("sbi->m_centroid[%d][%d]: %u\n", i, j, sbi->m_centroid[i][j]);
 			ret += snprintf(buf + pos*6, sizeof(unsigned int) + sizeof(char), "%u\t", sbi->m_centroid[i][j]);
@@ -174,13 +174,15 @@ static ssize_t f2fs_sbi_store_sbi_str(struct f2fs_attr *a,
 	pos = 0;
 	ui = (unsigned int *)buf;
 
-	for (i = 0; i < 10; i++){
+	// f2fs_lock_op(sbi);
+	for (i = 0; i < M_K; i++){
 		for (j = 0; j < 4; j++){
 			sbi->m_centroid[i][j] = *(ui + pos);
 			pos++;
 		}
 	}
-	sbi->khg = 1;
+	sbi->hkg = 1;
+	// f2fs_unlock_op(sbi);
 	printk("pos: %d\n", pos);
 
 	return count;

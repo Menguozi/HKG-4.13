@@ -913,6 +913,8 @@ enum {
 	MAX_TIME,
 };
 
+#define M_K 10
+
 struct f2fs_sb_info {
 	struct super_block *sb;			/* pointer to VFS super block */
 	struct proc_dir_entry *s_proc;		/* proc entry */
@@ -1079,8 +1081,8 @@ struct f2fs_sb_info {
 	struct blk_cnt_entry *blk_cnt_en;
 
 	unsigned int updated_pages;
-	struct file *raw_disk;
-	loff_t disk_pos;
+	// struct file *raw_disk;
+	// loff_t disk_pos;
 
 	int last_utilization;
 	unsigned int *sample_irr_array;
@@ -1098,8 +1100,8 @@ struct f2fs_sb_info {
 	//真实质心数
 	int points;
 	unsigned int *centroid;
-	unsigned int m_centroid[10][4];
-	int khg;
+	unsigned int m_centroid[M_K][4];
+	int hkg;
 ///ch算法相关
 	
 //add finalG

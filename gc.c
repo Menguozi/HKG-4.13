@@ -317,7 +317,7 @@ void start_sample_thread(struct f2fs_sb_info *sbi){
 	//5个质心
 	sbi->CENTROID_NR = 10;
 	sbi->centroid = vzalloc(sizeof(unsigned int) * sbi->CENTROID_NR + 1);
-	sbi->khg = 0;
+	// sbi->hkg = 0;
 	sbi->sample_task = kthread_run(sample_thread_func, sbi, "f2fs_sample");
 	if (IS_ERR(sbi->sample_task)) {
 		printk(KERN_INFO "sample thread err when start!!!!!!!!!!!!");

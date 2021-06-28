@@ -1890,15 +1890,25 @@ static void build_block_cnt_manager(struct f2fs_sb_info *sbi){
 	struct blk_cnt_entry *blk_cnt_en = vzalloc(sizeof(struct blk_cnt_entry) * MAIN_SEGS(sbi) * sbi->blocks_per_seg);
 
 	// sbi->blk_cnt_en = entries;
-	sbi->raw_disk = filp_open("/dev/sdc2", O_RDWR, 0644);
-	sbi->disk_pos = 0;
-	sbi->khg = 0;
+	// sbi->raw_disk = filp_open("/dev/sdc2", O_RDWR, 0644);
+	// sbi->disk_pos = 0;
+	sbi->hkg = 0;
 
-	int i = 0;
+	int i = 0, j = 0;
+	for (i = 0; i < M_K; i++){
+		for (j = 0; j < 4; j++){
+			sbi->m_centroid[i][j] = 0;
+		}
+	}
+
 	//初始化时，IRR是MAX,第一次写当做冷数据;LWS是0
 	for(i = 0; i < MAIN_SEGS(sbi) * sbi->blocks_per_seg; i++){
 		(blk_cnt_en + i)->IRR = MAX_IRR;
 		(blk_cnt_en + i)->LWS = 0;
+		(blk_cnt_en + i)->read = 0;
+		(blk_cnt_en + i)->updated = 0;
+		(blk_cnt_en + i)->last = 0;
+		(blk_cnt_en + i)->lastlast = 0;
 	}
 	sbi->blk_cnt_en = blk_cnt_en;
 }
@@ -2301,7 +2311,7 @@ static void kill_f2fs_super(struct super_block *sb)
 //add finalG end
 		stop_discard_thread(F2FS_SB(sb));
 
-		filp_close(sbi->raw_disk, NULL);
+		// filp_close(sbi->raw_disk, NULL);
 
 	}
 	kill_block_super(sb);

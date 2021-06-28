@@ -1436,7 +1436,7 @@ static unsigned long int get_sub2(unsigned int a, unsigned int b)
 	return a > b? (a - b)*(a - b) : (b - a)*(b - a);
 }
 
-static unsigned long int get_distance(struct blk_cnt_entry *bce_a, struct blk_cnt_entry *bce_b)
+static inline unsigned long int get_distance(struct blk_cnt_entry *bce_a, struct blk_cnt_entry *bce_b)
 {
 	unsigned long int ret = 0;
 	ret += get_sub2(bce_a->updated, bce_b->updated);
@@ -1446,7 +1446,14 @@ static unsigned long int get_distance(struct blk_cnt_entry *bce_a, struct blk_cn
 	return ret;
 }
 
-int get_type_by_hkg(block_t old_blkaddr, struct f2fs_sb_info *sbi){
+static inline void printk_bce(struct blk_cnt_entry *bce){
+	printk("bce->read: %u", bce->read);
+	printk("bce->updated: %u", bce->updated);
+	printk("bce->lastlast: %u", bce->lastlast);
+	printk("bce->last: %u", bce->last);
+}
+
+static int get_type_by_hkg(block_t old_blkaddr, struct f2fs_sb_info *sbi){
 	int i, type = 0;
 	unsigned long int cur_dist, min_dist = 18446744073709551615u;
 	struct blk_cnt_entry bce_a;
@@ -1454,19 +1461,33 @@ int get_type_by_hkg(block_t old_blkaddr, struct f2fs_sb_info *sbi){
 
 	int old_segno = GET_SEGNO(sbi, old_blkaddr);
 	int old_offset = GET_BLKOFF_FROM_SEG0(sbi, old_blkaddr);
-	memcpy(&bce_a, &sbi->blk_cnt_en[old_segno * sbi->blocks_per_seg + old_offset], sizeof(struct blk_cnt_entry));
+	if(GET_SEGNO(sbi, old_blkaddr) != NULL_SEGNO){
+		// memcpy(&bce_a, &sbi->blk_cnt_en[old_segno * sbi->blocks_per_seg + old_offset], sizeof(struct blk_cnt_entry));
+		bce_a.read = sbi->blk_cnt_en[old_segno * sbi->blocks_per_seg + old_offset].read;
+		bce_a.updated = sbi->blk_cnt_en[old_segno * sbi->blocks_per_seg + old_offset].updated;
+		bce_a.last = sbi->blk_cnt_en[old_segno * sbi->blocks_per_seg + old_offset].last;
+		bce_a.lastlast = sbi->blk_cnt_en[old_segno * sbi->blocks_per_seg + old_offset].lastlast;
+	}
+	else{
+		return 0;
+	}
 
-	for(i = 0; i < 10; i++){
+	// printk_bce(&bce_a);
+
+	for(i = 0; i < M_K; i++){
 		bce_b.updated = sbi->m_centroid[i][0];
 		bce_b.read = sbi->m_centroid[i][1];
 		bce_b.lastlast = sbi->m_centroid[i][2];
 		bce_b.last = sbi->m_centroid[i][3];
+		// printk_bce(&bce_b);
 		cur_dist = get_distance(&bce_a, &bce_b);
-		if(min_dist < cur_dist){
+		if(min_dist > cur_dist){
 			min_dist = cur_dist;
 			type = i;
 		}
 	}
+
+	// printk("get_type_by_hkg: %d", type);
 
 	return type;
 }
@@ -1747,9 +1768,9 @@ int do_write_data_page(struct f2fs_io_info *fio)
 	if (fio->need_lock == LOCK_REQ && !f2fs_trylock_op(fio->sbi))
 		return -EAGAIN;
 	err = get_dnode_of_data(&dn, page->index, LOOKUP_NODE);
-	old_blkaddr = dn.data_blkaddr;
 	if (err)
 		goto out;
+	old_blkaddr = dn.data_blkaddr;
 	/* This page is already truncated */
 	if (dn.data_blkaddr == NULL_ADDR) {
 		ClearPageUptodate(page);
@@ -1784,7 +1805,8 @@ int do_write_data_page(struct f2fs_io_info *fio)
 		get_page(page);
 		set_delay_data_page(page);
 		type = get_type_by_hotness(new_IRR, fio->sbi);
-		if(fio->sbi->khg){
+		// printk("get_type_by_hotness: %d", type);
+		if(fio->sbi->hkg){
 			type = get_type_by_hkg(old_blkaddr, fio->sbi);
 		}
 		

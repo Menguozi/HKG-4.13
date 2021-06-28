@@ -1594,7 +1594,7 @@ void invalidate_blocks(struct f2fs_sb_info *sbi, block_t addr)
 
 	char str[24];
 	unsigned int updated, read, i = 0, j = 0;
-	loff_t diskpos = sbi->disk_pos;
+	// loff_t diskpos = sbi->disk_pos;
 
 	f2fs_bug_on(sbi, addr == NULL_ADDR);
 	if (addr == NEW_ADDR)
@@ -1627,8 +1627,8 @@ void invalidate_blocks(struct f2fs_sb_info *sbi, block_t addr)
 	}
 	str[++i] = '\t';
 
-	kernel_write(sbi->raw_disk, str, sizeof(str), &(diskpos));
-	sbi->disk_pos = diskpos;
+	// kernel_write(sbi->raw_disk, str, sizeof(str), &(diskpos));
+	// sbi->disk_pos = diskpos;
 
 	
 
@@ -2378,9 +2378,9 @@ void allocate_data_block_with_hotness(struct f2fs_sb_info *sbi, struct page *pag
 
 
 
-static unsigned int get_distance(unsigned int a, unsigned int b){
-	return a > b? a - b: b - a;
-}
+// static unsigned int get_distance(unsigned int a, unsigned int b){
+// 	return a > b? a - b: b - a;
+// }
 
 /*
 static int get_type_by_hotness(unsigned int hotness, struct f2fs_sb_info *sbi){
