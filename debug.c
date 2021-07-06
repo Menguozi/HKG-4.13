@@ -252,20 +252,6 @@ get_cache:
 	si->page_mem += (unsigned long long)npages << PAGE_SHIFT;
 }
 
-static int check_valid_map(struct f2fs_sb_info *sbi,
-				unsigned int segno, int offset)
-{
-	struct sit_info *sit_i = SIT_I(sbi);
-	struct seg_entry *sentry;
-	int ret;
-
-	mutex_lock(&sit_i->sentry_lock);
-	sentry = get_seg_entry(sbi, segno);
-	ret = f2fs_test_bit(offset, sentry->cur_valid_map);
-	mutex_unlock(&sit_i->sentry_lock);
-	return ret;
-}
-
 static int stat_show(struct seq_file *s, void *v)
 {
 	struct f2fs_stat_info *si;
@@ -409,10 +395,6 @@ static int stat_show(struct seq_file *s, void *v)
 		seq_printf(s, "IPU: %u blocks\n", si->inplace_count);
 		seq_printf(s, "SSR: %u blocks in %u segments\n",
 			   si->block_count[SSR], si->segment_count[SSR]);
-		seq_printf(s, "WARM DATA LFS: %u blocks\n",
-			   si->sbi->block_count[WARM_DATA_LFS]);
-		seq_printf(s, "WARM DATA FG_GC: %u blocks\n",
-			   si->sbi->block_count[WARM_DATA_FG_GC]);
 		seq_printf(s, "LFS: %u blocks in %u segments\n",
 			   si->block_count[LFS], si->segment_count[LFS]);
 
@@ -431,6 +413,7 @@ static int stat_show(struct seq_file *s, void *v)
 				si->cache_mem >> 10);
 		seq_printf(s, "  - paged : %llu KB\n",
 				si->page_mem >> 10);
+<<<<<<< HEAD
 //add finalG
 		/*
 		for(i = 0; i < MAIN_SEGS(si->sbi) * si->sbi->blocks_per_seg; i++){
@@ -539,6 +522,8 @@ static int stat_show(struct seq_file *s, void *v)
 		seq_printf(s, "%u\n", j);
 		// seq_printf(s, "\n updated blocks:  %u \n", unzero_updated);
 		// seq_printf(s, " read blocks:  %u \n", unzero_read);
+=======
+>>>>>>> parent of 5f6b651 (The M2H implementation of F2FS on linux-4.13.0)
 	}
 	mutex_unlock(&f2fs_stat_mutex);
 	return 0;

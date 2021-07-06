@@ -585,14 +585,6 @@ static void destroy_device_list(struct f2fs_sb_info *sbi)
 }
 
 static void f2fs_quota_off_umount(struct super_block *sb);
-//add finalG start!!!
-static void destroy_block_cnt_manager(struct f2fs_sb_info *sbi){
-	printk(KERN_INFO "destroy block cnt space!!!");
-	vfree(sbi->blk_cnt_en);
-	vfree(sbi->sample_irr_array);
-	vfree(sbi->sample_lws_array);
-}
-//add finalG end!!!
 static void f2fs_put_super(struct super_block *sb)
 {
 	struct f2fs_sb_info *sbi = F2FS_SB(sb);
@@ -643,9 +635,7 @@ static void f2fs_put_super(struct super_block *sb)
 
 	iput(sbi->node_inode);
 	iput(sbi->meta_inode);
-//add finalG start
-	destroy_block_cnt_manager(sbi);
-//add finalG end
+
 	/* destroy f2fs internal modules */
 	destroy_node_manager(sbi);
 	destroy_segment_manager(sbi);
@@ -1884,6 +1874,7 @@ static int f2fs_scan_devices(struct f2fs_sb_info *sbi)
 			"IO Block Size: %8d KB", F2FS_IO_SIZE_KB(sbi));
 	return 0;
 }
+<<<<<<< HEAD
 //add finalG
 static void build_block_cnt_manager(struct f2fs_sb_info *sbi){
 	//main area有5616个seg,为每个block分配一个int，总共约需要分配10M的内存
@@ -1913,6 +1904,8 @@ static void build_block_cnt_manager(struct f2fs_sb_info *sbi){
 	sbi->blk_cnt_en = blk_cnt_en;
 }
 //add finalG
+=======
+>>>>>>> parent of 5f6b651 (The M2H implementation of F2FS on linux-4.13.0)
 
 static int f2fs_fill_super(struct super_block *sb, void *data, int silent)
 {
@@ -2122,6 +2115,7 @@ try_onemore:
 			le64_to_cpu(seg_i->journal->info.kbytes_written);
 
 	build_gc_manager(sbi);
+<<<<<<< HEAD
 //add finalG
 	build_block_cnt_manager(sbi);
 
@@ -2129,6 +2123,9 @@ try_onemore:
 	printk(KERN_INFO "sjc : origin 5.4");
 
 //add finalG
+=======
+
+>>>>>>> parent of 5f6b651 (The M2H implementation of F2FS on linux-4.13.0)
 	/* get an inode for node space */
 	sbi->node_inode = f2fs_iget(sb, F2FS_NODE_INO(sbi));
 	if (IS_ERR(sbi->node_inode)) {
@@ -2220,9 +2217,6 @@ skip_recovery:
 		if (err)
 			goto free_sysfs;
 	}
-//add finalG start
-	start_sample_thread(sbi);
-//add finalG end
 	kfree(options);
 
 	/* recover broken superblock */
@@ -2305,10 +2299,6 @@ static void kill_f2fs_super(struct super_block *sb)
 		struct f2fs_sb_info *sbi = F2FS_SB(sb);
 		set_sbi_flag(F2FS_SB(sb), SBI_IS_CLOSE);
 		stop_gc_thread(F2FS_SB(sb));
-//add finalG start
-		//关闭抽样线程
-		stop_sample_thread(F2FS_SB(sb));
-//add finalG end
 		stop_discard_thread(F2FS_SB(sb));
 
 		// filp_close(sbi->raw_disk, NULL);

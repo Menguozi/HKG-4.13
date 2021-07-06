@@ -476,7 +476,6 @@ void set_data_blkaddr(struct dnode_of_data *dn)
 {
 	f2fs_wait_on_page_writeback(dn->node_page, NODE, true);
 	__set_data_blkaddr(dn);
-	//修改置脏
 	if (set_page_dirty(dn->node_page))
 		dn->node_changed = true;
 }
@@ -741,7 +740,7 @@ got_it:
 	if (new_i_size && i_size_read(inode) <
 				((loff_t)(index + 1) << PAGE_SHIFT))
 		f2fs_i_size_write(inode, ((loff_t)(index + 1) << PAGE_SHIFT));
-	return page;   
+	return page;
 }
 
 static int __allocate_data_block(struct dnode_of_data *dn)
@@ -1390,6 +1389,7 @@ static inline bool valid_ipu_blkaddr(struct f2fs_io_info *fio)
 	return true;
 }
 
+<<<<<<< HEAD
 
 
 void get_hotness_info(struct f2fs_sb_info *sbi, block_t old_blkaddr, unsigned int *old_IRR, unsigned int *old_LWS){
@@ -1834,6 +1834,10 @@ out:
 
 int do_write_data_page_back(struct f2fs_io_info *fio)
 {
+=======
+int do_write_data_page(struct f2fs_io_info *fio)
+{
+>>>>>>> parent of 5f6b651 (The M2H implementation of F2FS on linux-4.13.0)
 	struct page *page = fio->page;
 	struct inode *inode = page->mapping->host;
 	struct dnode_of_data dn;
@@ -1843,7 +1847,7 @@ int do_write_data_page_back(struct f2fs_io_info *fio)
 
 	set_new_dnode(&dn, inode, NULL, NULL, 0);
 	if (need_inplace_update(fio) &&
-			f2fs_lookup_extent_cache(inode, page->index, &ei) && false) {
+			f2fs_lookup_extent_cache(inode, page->index, &ei)) {
 		fio->old_blkaddr = ei.blk + page->index - ei.fofs;
 
 		if (valid_ipu_blkaddr(fio)) {
@@ -1873,7 +1877,7 @@ got_it:
 	 * If current allocation needs SSR,
 	 * it had better in-place writes for updated data.
 	 */
-	if (ipu_force || (valid_ipu_blkaddr(fio) && need_inplace_update(fio) && false)) {
+	if (ipu_force || (valid_ipu_blkaddr(fio) && need_inplace_update(fio))) {
 		err = encrypt_one_page(fio);
 		if (err)
 			goto out_writepage;
@@ -1919,7 +1923,6 @@ out:
 static int __write_data_page(struct page *page, bool *submitted,
 				struct writeback_control *wbc)
 {
-	//printk(KERN_INFO "__write_data_page");
 	struct inode *inode = page->mapping->host;
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
 	loff_t i_size = i_size_read(inode);
@@ -1930,7 +1933,6 @@ static int __write_data_page(struct page *page, bool *submitted,
 	bool need_balance_fs = false;
 	int err = 0;
 	struct f2fs_io_info fio = {
-		.is_fg_gc_page = false,
 		.sbi = sbi,
 		.type = DATA,
 		.op = REQ_OP_WRITE,
@@ -1994,6 +1996,7 @@ write:
 		if (!err)
 			goto out;
 	}
+
 	if (err == -EAGAIN) {
 		err = do_write_data_page(&fio);
 		if (err == -EAGAIN) {
@@ -2003,6 +2006,7 @@ write:
 	}
 	if (F2FS_I(inode)->last_disk_size < psize)
 		F2FS_I(inode)->last_disk_size = psize;
+
 done:
 	if (err && err != -ENOENT)
 		goto redirty_out;
@@ -2030,6 +2034,7 @@ out:
 
 	if (submitted)
 		*submitted = fio.submitted;
+
 	return 0;
 
 redirty_out:
@@ -2061,7 +2066,6 @@ static int f2fs_write_cache_pages(struct address_space *mapping,
 	pgoff_t uninitialized_var(writeback_index);
 	pgoff_t index;
 	pgoff_t end;		/* Inclusive */
-	//当前写的page
 	pgoff_t done_index;
 	pgoff_t last_idx = ULONG_MAX;
 	int cycled;
@@ -2085,14 +2089,12 @@ static int f2fs_write_cache_pages(struct address_space *mapping,
 			cycled = 0;
 		end = -1;
 	} else {
-		//确定起始页偏移
 		index = wbc->range_start >> PAGE_SHIFT;
 		end = wbc->range_end >> PAGE_SHIFT;
 		if (wbc->range_start == 0 && wbc->range_end == LLONG_MAX)
 			range_whole = 1;
 		cycled = 1; /* ignore range_cyclic tests */
 	}
-	//确定要写入的页的tag
 	if (wbc->sync_mode == WB_SYNC_ALL || wbc->tagged_writepages)
 		tag = PAGECACHE_TAG_TOWRITE;
 	else
@@ -2103,7 +2105,7 @@ retry:
 	done_index = index;
 	while (!done && (index <= end)) {
 		int i;
-        //page数目
+
 		nr_pages = pagevec_lookup_tag(&pvec, mapping, &index, tag,
 			      min(end - index, (pgoff_t)PAGEVEC_SIZE - 1) + 1);
 		if (nr_pages == 0)
@@ -2120,35 +2122,32 @@ retry:
 
 			done_index = page->index;
 retry_write:
-			//锁住
 			lock_page(page);
-			//有问题，释放下一个
+
 			if (unlikely(page->mapping != mapping)) {
 continue_unlock:
 				unlock_page(page);
 				continue;
 			}
-			//目前不是dirty状态，下一个
+
 			if (!PageDirty(page)) {
 				/* someone wrote it for us */
 				goto continue_unlock;
 			}
-			//正处于回写的状态中
+
 			if (PageWriteback(page)) {
-				//如果是需要等待的（如fsync）就等它写完再继续
-				if (wbc->sync_mode != WB_SYNC_NONE){
+				if (wbc->sync_mode != WB_SYNC_NONE)
 					f2fs_wait_on_page_writeback(page,
 								DATA, true);
-				}
 				else
 					goto continue_unlock;
 			}
+
 			BUG_ON(PageWriteback(page));
 			if (!clear_page_dirty_for_io(page))
 				goto continue_unlock;
-            
+
 			ret = __write_data_page(page, &submitted, wbc);
-			//如果写失败了
 			if (unlikely(ret)) {
 				/*
 				 * keep nr_to_write, since vfs uses this to

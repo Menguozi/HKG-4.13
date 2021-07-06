@@ -14,9 +14,6 @@
 /* constant macro */
 #define NULL_SEGNO			((unsigned int)(~0))
 #define NULL_SECNO			((unsigned int)(~0))
-//add finalG
-#define MAX_IRR				((unsigned int)(~0) -1)
-//add finalG
 
 #define DEF_RECLAIM_PREFREE_SEGMENTS	5	/* 5% over total segments */
 #define DEF_MAX_RECLAIM_PREFREE_SEGMENTS	4096	/* 8GB in maximum */
@@ -74,11 +71,6 @@
 
 #define NEXT_FREE_BLKADDR(sbi, curseg)					\
 	(START_BLOCK(sbi, (curseg)->segno) + (curseg)->next_blkoff)
-
-//add finalG start
-#define HOTNESS_NEXT_FREE_BLKADDR(sbi, hotness_curseg)					\
-	(START_BLOCK(sbi, hotness_curseg->segno) + hotness_curseg->next_blkoff)
-//add finalG end
 
 #define GET_SEGOFF_FROM_SEG0(sbi, blk_addr)	((blk_addr) - SEG0_BLKADDR(sbi))
 #define GET_SEGNO_FROM_SEG0(sbi, blk_addr)				\
@@ -140,9 +132,7 @@ enum {
  */
 enum {
 	LFS = 0,
-	SSR,
-	WARM_DATA_LFS,
-	WARM_DATA_FG_GC
+	SSR
 };
 
 /*
@@ -181,6 +171,7 @@ struct victim_sel_policy {
 	unsigned int min_segno;		/* segment # having min. cost */
 };
 
+<<<<<<< HEAD
 
 //add finalG
 struct blk_cnt_entry{
@@ -201,6 +192,8 @@ struct calcu_centroid{
 
 //add finalG
 
+=======
+>>>>>>> parent of 5f6b651 (The M2H implementation of F2FS on linux-4.13.0)
 struct seg_entry {
 	unsigned int type:6;		/* segment type like CURSEG_XXX_TYPE */
 	unsigned int valid_blocks:10;	/* # of valid blocks */
@@ -227,13 +220,6 @@ struct segment_allocation {
 	void (*allocate_segment)(struct f2fs_sb_info *, int, bool);
 };
 
-//add finalG start
-struct hotness_segment_allocation {
-	void (*hotness_allocate_segment)(struct f2fs_sb_info *, int);
-};
-//add finalG end
-
-
 /*
  * this value is set in page as a private data which indicate that
  * the page is atomically written, and it is in inmem_pages list.
@@ -254,9 +240,7 @@ struct inmem_pages {
 
 struct sit_info {
 	const struct segment_allocation *s_ops;
-//add finalG start
-	const struct hotness_segment_allocation *hotness_s_ops;
-//add finalG end
+
 	block_t sit_base_addr;		/* start block address of SIT area */
 	block_t sit_blocks;		/* # of blocks used by SIT area */
 	block_t written_valid_blocks;	/* # of valid blocks in main area */
@@ -332,24 +316,6 @@ struct curseg_info {
 	unsigned int next_segno;		/* preallocated segment */
 };
 
-//add finalG start
-struct page_wait_in_curseg{
-	unsigned long i_ino;
-	unsigned long index;
-};
-struct hotness_curseg_info {
-	struct mutex hotness_curseg_mutex;		/* lock for consistency */
-	struct f2fs_summary_block *sum_blk;	/* cached summary block */
-	unsigned int segno;			/* current segment number */
-	unsigned short next_blkoff;		/* next block offset to write */
-	unsigned int zone;			/* current zone number */
-	unsigned int next_segno;		/* preallocated segment */
-	struct page *delay_page[512];
-	unsigned short delay_page_nr;
-};
-
-//add finalG end
-
 struct sit_entry_set {
 	struct list_head set_list;	/* link with all sit sets */
 	unsigned int start_segno;	/* start segno of sits in set */
@@ -363,14 +329,6 @@ static inline struct curseg_info *CURSEG_I(struct f2fs_sb_info *sbi, int type)
 {
 	return (struct curseg_info *)(SM_I(sbi)->curseg_array + type);
 }
-
-//add finalG start
-static inline struct hotness_curseg_info *HOTNESS_CURSEG_I(struct f2fs_sb_info *sbi, int type)
-{
-	return (struct hotness_curseg_info *)(SM_I(sbi)->hotness_curseg_array + type);
-}
-
-//add finalG end
 
 static inline struct seg_entry *get_seg_entry(struct f2fs_sb_info *sbi,
 						unsigned int segno)

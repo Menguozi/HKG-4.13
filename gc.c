@@ -23,213 +23,6 @@
 #include "gc.h"
 #include <trace/events/f2fs.h>
 
-
-//add finalG start
-static unsigned int get_distance(unsigned int a, unsigned int b){
-    return a > b? a - b: b - a;
-}
-
-///现在设k= 5
-static void get_centroid(struct f2fs_sb_info *sbi, unsigned int *sample, int sample_start, int sample_size, unsigned int *centroid){
-    /*1、遍历一遍，求得最大值，并按照1万为单位，把level切割好
-     *2、再次遍历，统计每个level中的样本数
-     *3、遍历5次，求出top 5，先输出来看看
-     */
-    //3000万能够保证不超
-    int level_cnt[3000] = {0};
-
-    int i = 0, level_nr = 0, level_seq = 0, centroid_cnt = 0;
-    unsigned int max = 0;
-    for(i = sample_start; i < sample_start + sample_size; i++){
-        if(sample[i] < sbi->COLD_DATA_THRESHOLD && sample[i] > max)
-            max = sample[i];
-    }
-    //每个level都是前闭后开
-    level_nr = max / sbi->LEVEL_WIDTH;
-    //printf("max = %u; level_nr = %d\n", max, level_nr);
-    for(i = sample_start; i < sample_start + sample_size; i++){
-        if(sample[i] < sbi->COLD_DATA_THRESHOLD){
-            level_seq = sample[i] / sbi->LEVEL_WIDTH;
-            level_cnt[level_seq]++;
-        }
-    }
-   
-    while(centroid_cnt < sbi->CENTROID_NR){
-        int tmp_max = 0, tmp_index = 0;
-		int be_cent = 1;
-        for(i = 0; i < level_nr; i++){
-            if(level_cnt[i] > tmp_max){
-                tmp_max = level_cnt[i];
-                tmp_index = i;
-            }
-        }
-		//选出了一个待定质心后，看他能不能作为质心
-		for(i = 0; i < centroid_cnt; i++){
-			if(centroid[i] / sbi->LEVEL_WIDTH == tmp_index + 1 || centroid[i] / sbi->LEVEL_WIDTH  + 1 == tmp_index){
-				be_cent = 0;
-				break;
-			}
-		}
-		if(be_cent){
-	        //printf("centroid %d is %u, has %d points in section\n", centroid_cnt, tmp_index * LEVEL_WIDTH, tmp_max);
-	        centroid[centroid_cnt++] = tmp_index * sbi->LEVEL_WIDTH;
-		}
-		level_cnt[tmp_index] = 0;
-    }
-}
-
-
-static void kMeans_func(struct f2fs_sb_info *sbi, unsigned int *sample, int sample_start, int sample_size, unsigned int *centroid){
-    ///有了选好的初始质心之后进行一下几步
-    ///1、遍历一遍样本，把样本分类到各个质心，分样本时，同时计算一下每个cluster的样本的平均值，作为下一次聚类的质心，
-    ///同时累加一下每个样本到其质心的距离
-    ///2、对比这次算出来的距离和上次的距离的差是否在阈值内；是就停止迭代，质心就是最后的结果；否则，继续循环
-    struct calcu_centroid new_cent[sbi->CENTROID_NR];
-    unsigned int min_dis_of_centroids = (unsigned int)(~0) -1;
-    unsigned long long last_dis_sum =  (unsigned long long)(~0) -1;
-    unsigned long long cur_dis_sum = (unsigned long long)(~0) -1;
-    int i = 0, j = 0, index_of_min_dis = 0, cluster_time = 0, league_sample = 0;
-
-    do{
-        league_sample = 0;
-        cluster_time++;
-        //每次计算新的质心前先初始化一下
-        for(j = 0; j < sbi->CENTROID_NR; j++){
-            new_cent[j].sum_of_cluster = 0;
-            new_cent[j].point_nr = 0;
-        }
-        last_dis_sum = cur_dis_sum;
-        cur_dis_sum = 0;
-
-        ///遍历分类，同时计算每类平均值和距离之和
-        ///重新计算calcu
-        for(i = sample_start; i < sample_start + sample_size; i++){
-            if(sample[i] < sbi->COLD_DATA_THRESHOLD){
-                league_sample++;
-                min_dis_of_centroids = (unsigned int)(~0) -1;
-                for(j = 0; j < sbi->CENTROID_NR; j++){
-                    if(get_distance(sample[i], centroid[j])  < min_dis_of_centroids){
-                        min_dis_of_centroids = get_distance(sample[i], centroid[j]);
-                        index_of_min_dis = j;
-                    }
-                }
-
-                if(min_dis_of_centroids < 30000){
-					///point分到了当前类中，需要计算当前类的value和，点数加一，方便计算平均值
-	                new_cent[index_of_min_dis].sum_of_cluster += sample[i];
-	                new_cent[index_of_min_dis].point_nr++;
-	                ///一个point分好之后，类加上它到自己质心的距离和
-	                cur_dis_sum += min_dis_of_centroids;
-                }
-            }
-        }
-        ///这次聚完了，重新算出当前的质心，给下一次聚类用
-        //printf("it is %d time to cluster, league_sample = %d!\n", cluster_time, league_sample);
-        for(j = 0; j < sbi->CENTROID_NR; j++){
-            centroid[j] = new_cent[j].sum_of_cluster == 0? 0: new_cent[j].sum_of_cluster / new_cent[j].point_nr;
-            //printf("cluster %d: value = %u, point_nr = %d\n", j, centroid[j], new_cent[j].point_nr);
-        }
-
-    }while(cur_dis_sum != last_dis_sum);
-	//1、检查质心中是否有小于4万的，没有的话加以一个2万的质心
-	int points = sbi->CENTROID_NR, res = 0;
-	bool need_add = true;
-	for(i = 0; i < sbi->CENTROID_NR; i++){
-		if(*(sbi->centroid + i) < 40000){
-			need_add = false;
-			break;
-		}
-	}
-	if(need_add){
-		*(sbi->centroid + sbi->CENTROID_NR) = 20000;
-		points = sbi->CENTROID_NR + 1;
-	}
-	sbi->points = points;
-
-	printk(KERN_INFO "it is %d time to get new centriod\n", sample_start / sample_size + 1);
-	for(i = 0; i < sbi->points; i++){
-		printk(KERN_INFO "centroid %d is %u\n", i, *(sbi->centroid + i));
-	}
-
-}
-
-
-
-static int check_valid_map_sc(struct f2fs_sb_info *sbi,
-				unsigned int segno, int offset)
-{
-	struct sit_info *sit_i = SIT_I(sbi);
-	struct seg_entry *sentry;
-	int ret;
-
-	mutex_lock(&sit_i->sentry_lock);
-	sentry = get_seg_entry(sbi, segno);
-	ret = f2fs_test_bit(offset, sentry->cur_valid_map);
-	mutex_unlock(&sit_i->sentry_lock);
-	return ret;
-}
-
-
-static int sample_thread_func(void *data){
-	struct f2fs_sb_info *sbi = data;
-	while (!kthread_should_stop()) {
-		int SAMPLE_SIZE = 10000;	//检查block有效性用的变量
-		unsigned int segno = 0;
-		int offset = 0;
-		int i = 0, level = 0, cur_lws = 0, cur_irr = 0, cur_sample = 0;	//循环里用的一些变量
-		
-		if(utilization(sbi) % 10 == 0 && utilization(sbi) != 0 && utilization(sbi) != sbi->last_utilization){	//每个利用率10%的整数倍
-			
-			if(utilization(sbi) != sbi->last_utilization){	//防止并发情况的发生再次检查
-				sbi->last_utilization = utilization(sbi);	//防止在同一利用率上做多次抽样
-			
-				sbi->util = utilization(sbi);	//记录当前这次抽样的文件系统利用率
-				sbi->sample_times++;	//统计一下抽样次数是否符合预期
-
-				/*
-				for(i = 0; i < SAMPLE_SIZE; i++){	//每次抽样之前，先把之前的结果抹去
-					*(sbi->sample_irr_array + i) = 0;
-					*(sbi->sample_lws_array + i) = 0;
-				}
-				*/
-				
-				while(cur_sample < SAMPLE_SIZE){	//多次遍历所有hotness meta，直到抽样到给定数目的样本
-					for(segno = 0; segno < MAIN_SEGS(sbi); segno++){	//遍历每个seg
-						if(get_seg_entry(sbi, segno)->type == CURSEG_WARM_DATA){	//只抽样warm_data
-							for(offset = 0; offset < sbi->blocks_per_seg; offset++){	//遍历warm_data seg的所有block
-								if(check_valid_map_sc(sbi, segno, offset) == 1){	//过滤掉无效block
-									cur_lws = (sbi->blk_cnt_en + segno * sbi->blocks_per_seg + offset)->LWS;	//对应block的LWS
-									cur_irr = (sbi->blk_cnt_en + segno * sbi->blocks_per_seg + offset)->IRR;	//对应block的IRR
-									//有效的warm data block中，抽样lws在一定范围内的block，这样能保证抽样到最近数据
-									if(cur_lws >= sbi->block_count[WARM_DATA_LFS] - 10000 * (level + 1) && cur_lws <= sbi->block_count[WARM_DATA_LFS] - 10000 * level 
-										&& cur_sample < SAMPLE_SIZE){
-										//printk(KERN_INFO "cur_sample = %d", cur_sample);
-										*(sbi->sample_irr_array + (sbi->util / 10 - 1) * SAMPLE_SIZE + cur_sample) = cur_irr;
-										*(sbi->sample_lws_array + (sbi->util / 10 - 1) * SAMPLE_SIZE + cur_sample) = cur_lws;
-										cur_sample++;
-									}
-								}
-							}
-						}
-					}
-					level++;
-				}
-
-				//抽样完成，根据平均热度值判断变化，看是否需要聚类
-				
-				//如果需要聚类，聚类1：根据hotness level分类，统计每个level中的数目，数目多的level选为初始质心
-				get_centroid(sbi, sbi->sample_irr_array, (sbi->util / 10 - 1) * SAMPLE_SIZE, SAMPLE_SIZE, sbi->centroid);
-				//聚类2：启发式方法聚类，减少计算开销
-				kMeans_func(sbi, sbi->sample_irr_array, (sbi->util / 10 - 1) * SAMPLE_SIZE, 10000, sbi->centroid);
-				printk(KERN_INFO "sample end！！！！！！");
-			}
-		}
-	
-        msleep_interruptible(5000);
-    }
-}
-//add finalG end 
-
 static int gc_thread_func(void *data)
 {
 	struct f2fs_sb_info *sbi = data;
@@ -305,6 +98,7 @@ static int gc_thread_func(void *data)
 	return 0;
 }
 
+<<<<<<< HEAD
 
 //add finalG start
 void start_sample_thread(struct f2fs_sb_info *sbi){
@@ -337,6 +131,8 @@ void stop_sample_thread(struct f2fs_sb_info *sbi)
 
 //add finalG stop
 
+=======
+>>>>>>> parent of 5f6b651 (The M2H implementation of F2FS on linux-4.13.0)
 int start_gc_thread(struct f2fs_sb_info *sbi)
 {
 	struct f2fs_gc_kthread *gc_th;
@@ -405,8 +201,6 @@ static void select_policy(struct f2fs_sb_info *sbi, int gc_type,
 		p->gc_mode = select_gc_type(sbi->gc_thread, gc_type);
 		p->dirty_segmap = dirty_i->dirty_segmap[DIRTY];
 		p->max_search = dirty_i->nr_dirty[DIRTY];
-		//p->dirty_segmap = dirty_i->dirty_segmap[DIRTY_WARM_DATA];
-		//p->max_search = dirty_i->nr_dirty[DIRTY_WARM_DATA];
 		p->ofs_unit = sbi->segs_per_sec;
 	}
 
@@ -428,8 +222,7 @@ static unsigned int get_max_cost(struct f2fs_sb_info *sbi,
 	if (p->alloc_mode == SSR)
 		return sbi->blocks_per_seg;
 	if (p->gc_mode == GC_GREEDY)
-		//return 2 * sbi->blocks_per_seg * p->ofs_unit;
-		return UINT_MAX;
+		return 2 * sbi->blocks_per_seg * p->ofs_unit;
 	else if (p->gc_mode == GC_CB)
 		return UINT_MAX;
 	else /* No other gc_mode */
@@ -458,35 +251,7 @@ static unsigned int check_bg_victims(struct f2fs_sb_info *sbi)
 	}
 	return NULL_SEGNO;
 }
-//add finalG start
 
-static unsigned int get_ch_cost(struct f2fs_sb_info *sbi, unsigned int segno)
-{
-	//1、计算当前seg中冷blk的数目(lws为0-10%内的算作冷)
-	struct seg_entry *sentry;
-	unsigned int i = 0, u = 0, vblocks = 0;
-	struct sit_info *sit_i = SIT_I(sbi);
-	//mutex_lock(&sit_i->sentry_lock);
-	sentry = get_seg_entry(sbi, segno);
-	unsigned int max_lws_in_seg = 0, age = 0;
-	for(i = 0; i < 512; i++){
-		if(f2fs_test_bit(i, sentry->cur_valid_map)){
-			if(sbi->blk_cnt_en[segno * 512 + i].LWS > max_lws_in_seg){
-				max_lws_in_seg = sbi->blk_cnt_en[segno * 512 + i].LWS;
-			}
-		}
-	}
-	//age = (sbi->block_count[WARM_DATA_LFS] - max_lws_in_seg) / 10000;
-	age = (sbi->block_count[WARM_DATA_LFS] - max_lws_in_seg) / 40000;
-	//mutex_unlock(&sit_i->sentry_lock);
-	//综合free因素和cold因素
-	vblocks = get_valid_blocks(sbi, segno, true);
-	u = (vblocks * 1000) >> sbi->log_blocks_per_seg;
-	return UINT_MAX - ((1000 * (1000 - u) * age) / (4 * u));
-}
-
-
-//add finalG end
 static unsigned int get_cb_cost(struct f2fs_sb_info *sbi, unsigned int segno)
 {
 	struct sit_info *sit_i = SIT_I(sbi);
@@ -524,8 +289,9 @@ static unsigned int get_greedy_cost(struct f2fs_sb_info *sbi,
 {
 	unsigned int valid_blocks =
 			get_valid_blocks(sbi, segno, true);
-	return valid_blocks;
-	//return IS_DATASEG(get_seg_entry(sbi, segno)->type) ? valid_blocks * 2 : valid_blocks;
+
+	return IS_DATASEG(get_seg_entry(sbi, segno)->type) ?
+				valid_blocks * 2 : valid_blocks;
 }
 
 static unsigned int get_ssr_cost(struct f2fs_sb_info *sbi,
@@ -545,10 +311,7 @@ static inline unsigned int get_gc_cost(struct f2fs_sb_info *sbi,
 
 	/* alloc_mode == LFS */
 	if (p->gc_mode == GC_GREEDY)
-		//return get_greedy_cost(sbi, segno);
-		return get_ch_cost(sbi, segno);
-		//return get_cb_cost(sbi, segno);
-	
+		return get_greedy_cost(sbi, segno);
 	else
 		return get_cb_cost(sbi, segno);
 }
@@ -586,7 +349,6 @@ static int get_victim_by_default(struct f2fs_sb_info *sbi,
 	mutex_lock(&dirty_i->seglist_lock);
 
 	p.alloc_mode = alloc_mode;
-	//可以在里面配置，只选择WARM DATA做gc
 	select_policy(sbi, gc_type, type, &p);
 
 	p.min_segno = NULL_SEGNO;
@@ -645,7 +407,7 @@ static int get_victim_by_default(struct f2fs_sb_info *sbi,
 		if (gc_type == FG_GC && p.alloc_mode == LFS &&
 					no_fggc_candidate(sbi, secno))
 			goto next;
-		
+
 		cost = get_gc_cost(sbi, segno, &p);
 
 		if (p.min_cost > cost) {
@@ -672,42 +434,7 @@ got_it:
 				set_bit(secno, dirty_i->victim_secmap);
 		}
 		*result = (p.min_segno / p.ofs_unit) * p.ofs_unit;
-		//printk(KERN_INFO "get victim success!!\n");
-		//输出cb选中的victim的valid分布情况
-		/*
-		if (gc_type == FG_GC){
-			struct seg_entry *sentry;
-			struct sit_info *sit_i = SIT_I(sbi);
-			int level_nr = 5;
-			int level_cnt[20];
-			int i = 0, j = 0, k = 0, cur_level = 0;
-			//mutex_lock(&sit_i->sentry_lock);
-			//各个level的cnt
-			for(k = 0; k < level_nr; k++){
-				level_cnt[k] = 0;
-			}
-			int valid_cnt = 0, level_width = sbi->block_count[WARM_DATA_LFS] / level_nr;
-			sentry = get_seg_entry(sbi, *result);
-			valid_cnt = sentry->valid_blocks;
-			for(j = 0; j < 512; j++){
-				if(f2fs_test_bit(j, sentry->cur_valid_map)){
-					cur_level = sbi->blk_cnt_en[*result * 512 + j].LWS / level_width;
-					if(cur_level == level_nr)
-						cur_level = level_nr - 1; 
-					level_cnt[cur_level]++;
-				}
-			}
-			printk(KERN_INFO "%d: %d, %d, %d, %d, %d, \n", valid_cnt, level_cnt[0], level_cnt[1], level_cnt[2], level_cnt[3], level_cnt[4]);
-			//mutex_unlock(&sit_i->sentry_lock);
-		}
-		*/
 
-
-
-
-
-
-		
 		trace_f2fs_get_victim(sbi->sb, type, gc_type, &p,
 				sbi->cur_victim_sec,
 				prefree_segments(sbi), free_segments(sbi));
@@ -1012,7 +739,7 @@ static void move_data_page(struct inode *inode, block_t bidx, int gc_type,
 							unsigned int segno, int off)
 {
 	struct page *page;
-	//给page上锁，这是防止gc和write data page之间的竞态
+
 	page = get_lock_data_page(inode, bidx, true);
 	if (IS_ERR(page))
 		return;
@@ -1022,15 +749,14 @@ static void move_data_page(struct inode *inode, block_t bidx, int gc_type,
 
 	if (f2fs_is_atomic_file(inode))
 		goto out;
-    //少有bg,忽略
-	if (gc_type == BG_GC && 1 == 0) {
+
+	if (gc_type == BG_GC) {
 		if (PageWriteback(page))
 			goto out;
 		set_page_dirty(page);
 		set_cold_data(page);
 	} else {
 		struct f2fs_io_info fio = {
-			.is_fg_gc_page = true,
 			.sbi = F2FS_I_SB(inode),
 			.type = DATA,
 			.temp = COLD,
@@ -1054,8 +780,7 @@ retry:
 
 		set_cold_data(page);
 
-		//err = do_write_data_page(&fio);
-		err = do_write_data_page_back(&fio);
+		err = do_write_data_page(&fio);
 		if (err == -ENOMEM && is_dirty) {
 			congestion_wait(BLK_RW_ASYNC, HZ/50);
 			goto retry;
@@ -1172,11 +897,12 @@ next_step:
 				move_encrypted_block(inode, start_bidx, segno, off);
 			else
 				move_data_page(inode, start_bidx, gc_type, segno, off);
-            
+
 			if (locked) {
 				up_write(&fi->dio_rwsem[WRITE]);
 				up_write(&fi->dio_rwsem[READ]);
 			}
+
 			stat_inc_data_blk_count(sbi, 1, gc_type);
 		}
 	}
@@ -1202,7 +928,6 @@ static int do_garbage_collect(struct f2fs_sb_info *sbi,
 				unsigned int start_segno,
 				struct gc_inode_list *gc_list, int gc_type)
 {
-    //printk(KERN_INFO "do_garbage_collect start++++++++++++++++++++++++");
 	struct page *sum_page;
 	struct f2fs_summary_block *sum;
 	struct blk_plug plug;
@@ -1211,7 +936,7 @@ static int do_garbage_collect(struct f2fs_sb_info *sbi,
 	int sec_freed = 0;
 	unsigned char type = IS_DATASEG(get_seg_entry(sbi, segno)->type) ?
 						SUM_TYPE_DATA : SUM_TYPE_NODE;
-     //printk(KERN_INFO "is data gc? %d", type == SUM_TYPE_NODE? 0: 1);
+
 	/* readahead multi ssa blocks those have contiguous address */
 	if (sbi->segs_per_sec > 1)
 		ra_meta_pages(sbi, GET_SUM_BLOCK(sbi, segno),
@@ -1222,7 +947,7 @@ static int do_garbage_collect(struct f2fs_sb_info *sbi,
 		sum_page = get_sum_page(sbi, segno++);
 		unlock_page(sum_page);
 	}
-    
+
 	blk_start_plug(&plug);
 
 	for (segno = start_segno; segno < end_segno; segno++) {
@@ -1269,7 +994,7 @@ next:
 		sec_freed = 1;
 
 	stat_inc_call_count(sbi->stat_info);
-    //printk(KERN_INFO "do_garbage_collect end----------------------------");
+
 	return sec_freed;
 }
 
@@ -1319,32 +1044,28 @@ gc_more:
 	if (!__get_victim(sbi, &segno, gc_type))
 		goto stop;
 	ret = 0;
-    //printk(KERN_INFO "victim is %d", segno);
+
 	if (do_garbage_collect(sbi, segno, &gc_list, gc_type) &&
 			gc_type == FG_GC)
 		sec_freed++;
 
 	if (gc_type == FG_GC)
 		sbi->cur_victim_sec = NULL_SEGNO;
-    
+
 	if (!sync) {
 		if (has_not_enough_free_secs(sbi, sec_freed, 0)) {
 			segno = NULL_SEGNO;
 			goto gc_more;
 		}
 
-		if (gc_type == FG_GC){
-			//printk(KERN_INFO "after gc do cp!!!!!!!!!!!!!!");
+		if (gc_type == FG_GC)
 			ret = write_checkpoint(sbi, &cpc);
-            //printk(KERN_INFO "do cp end!!!!!!!!!!!!!!");
-		}
 	}
-	
 stop:
 	SIT_I(sbi)->last_victim[ALLOC_NEXT] = 0;
 	SIT_I(sbi)->last_victim[FLUSH_DEVICE] = init_segno;
-	//printk(KERN_INFO "unlock gc mutex!!!!!!!!!!!!!!");
 	mutex_unlock(&sbi->gc_mutex);
+
 	put_gc_inode(&gc_list);
 
 	if (sync)

@@ -128,7 +128,7 @@ static inline bool excess_dirty_nats(struct f2fs_sb_info *sbi)
 	return NM_I(sbi)->dirty_nat_cnt >= NM_I(sbi)->max_nid *
 					NM_I(sbi)->dirty_nats_ratio / 100;
 }
-//超过2.2M，就会开始下刷
+
 static inline bool excess_cached_nats(struct f2fs_sb_info *sbi)
 {
 	return NM_I(sbi)->nat_cnt >= DEF_NAT_CACHE_THRESHOLD;
@@ -142,15 +142,11 @@ enum mem_type {
 	EXTENT_CACHE,	/* indicates extent cache */
 	BASE_CHECK,	/* check kernel status */
 };
-//nat_set_root基树中的节点，表示块号为set的nat block是dirty的
+
 struct nat_entry_set {
-	//flush_nat_block时，用来连接排好序的nat block(按block的dirty entry数排)
 	struct list_head set_list;	/* link with other nat sets */
-	//当前set中dirty的nat entry
 	struct list_head entry_list;	/* link with dirty nat entries */
-	//nat block seq
 	nid_t set;			/* set number*/
-	//当前nat block中的脏entry数
 	unsigned int entry_cnt;		/* the # of nat entries in set */
 };
 
@@ -392,39 +388,18 @@ static inline nid_t get_nid(struct page *p, int off, bool i)
  */
 static inline int is_cold_data(struct page *page)
 {
-	//return PageChecked(page);
-	return 0;
+	return PageChecked(page);
 }
 
 static inline void set_cold_data(struct page *page)
 {
-	//SetPageChecked(page);
-	return;
+	SetPageChecked(page);
 }
 
 static inline void clear_cold_data(struct page *page)
 {
-	//ClearPageChecked(page);
-	return;
-}
-//add
-static inline int is_delay_data_page(struct page *page)
-{
-	return PageChecked(page);
-}
-
-static inline void set_delay_data_page(struct page *page)
-{
-	SetPageChecked(page);
-}
-
-static inline void clear_delay_data_page(struct page *page)
-{
 	ClearPageChecked(page);
 }
-//add
-
-
 
 static inline int is_node(struct page *page, int type)
 {
